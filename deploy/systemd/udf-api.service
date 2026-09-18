@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# udf-api.service — UDF backend API (Express + PostgreSQL/PostGIS)
+# ═══════════════════════════════════════════════════════════════════════════
+# Install:
+#   sudo cp deploy/systemd/udf-api.service /etc/systemd/system/udf-api.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now udf-api.service
+#   systemctl status udf-api.service ; journalctl -u udf-api -f
+#
+# Assumes: provision-server.sh has run (udf user/group, Node 20, PostgreSQL +
+# PostGIS), the app is at /opt/udf/backend (built dist/ + node_modules), and
+# /etc/udf/{udf-api.env,secrets.env,jwt_*.pem} exist.
+# ═══════════════════════════════════════════════════════════════════════════
+
+[Unit]
+Description=UDF backend API
+Documentation=file:/opt/udf/deploy/RUNBOOK.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=udf
+Group=udf
+WorkingDirectory=/opt/udf/backend
+
+# Operator config (non-secret) + generated machine secrets (KEK, blind index).
+# systemd reads both as root before dropping privileges, so 600/640 perms are OK.
+EnvironmentFile=/etc/udf/udf-api.env
+EnvironmentFile=/etc/udf/secrets.env
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+
+# ── Sandboxing / hardening ──────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+# Read-only /usr, /boot, /etc (the app only READS /etc/udf keys). /opt stays
+# writable in case a future feature needs scratch space under the app dir.
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=
+# The app needs TCP (loopback → PostgreSQL, and the listening socket) + UNIX.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# @system-service is the standard restrictive filter for daemons. If the service
+# fails to start with EPERM (a native module doing an unusual syscall, e.g. the
+# argon2 binding), comment the next two lines out and retry — see RUNBOOK.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# ── Resource ceilings for a 1 vCPU / ~1 GB VM shared with the mail stack ─────
+MemoryMax=512M
+TasksMax=256
+
+# Logs → journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=udf-api
+
+[Install]
+WantedBy=multi-user.target

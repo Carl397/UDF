@@ -1,0 +1,2783 @@
+/* ═══════════════════════════════════════════════════════════════
+   UDF Party — app design system
+   Brand: corporate red + ink black, clean neutral surfaces
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: light;
+
+  /* brand — corporate red + ink black (per logo); gold retired */
+  --red: #c8102e;
+  --red-dark: #a00d24;
+  --red-deep: #7c0a1b;
+  --red-tint: #fbecee;
+  --black: #141414;
+  --ink: #1c1917;
+  /* legacy gold tokens remapped into the red family so stray refs stay on-brand */
+  --gold: #c8102e;
+  --gold-soft: #e0455c;
+  --gold-tint: #fbecee;
+
+  /* neutrals */
+  --paper: #f6f3f1;
+  --card: #ffffff;
+  --line: #ece5e1;
+  --line-strong: #ddd2cc;
+  --text: #1c1917;
+  --text-2: #57534e;
+  --text-3: #8a817b;
+
+  /* semantic */
+  --ok: #16a34a;
+  --ok-tint: #e8f7ec;
+  --warn: #d97706;
+  --warn-tint: #fdf1e0;
+  --danger: #dc2626;
+  --danger-tint: #fdecec;
+  --info: #2563eb;
+  --info-tint: #e8effd;
+
+  /* follow-up chip hues — deliberately distinct from the status tones above so
+     a case's follow-up chip never reads as its status colour (lib/caseStatus.ts
+     is the single source that maps each follow-up state to one of these). */
+  --violet: #7c3aed;
+  --violet-tint: #f2ecfe;
+  --teal: #0d9488;
+  --teal-tint: #e4f5f2;
+  --indigo: #4f46e5;
+  --indigo-tint: #eaecfe;
+
+  /* shape + depth */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --pill: 999px;
+  --sh-1: 0 1px 2px rgba(28, 25, 23, 0.06), 0 2px 8px rgba(28, 25, 23, 0.05);
+  --sh-2: 0 6px 20px rgba(28, 25, 23, 0.1);
+  --sh-3: 0 16px 44px rgba(28, 25, 23, 0.18);
+
+  /* layout */
+  --tabbar-h: 64px;
+  --header-h: 58px;
+  --app-w: 560px; /* phone-width column on large screens */
+
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+/* ── App shell ─────────────────────────────────────────────── */
+.app {
+  position: relative;
+  margin: 0 auto;
+  width: min(100%, var(--app-w));
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  box-shadow: 0 0 0 1px var(--line), 0 0 60px rgba(28, 25, 23, 0.08);
+  overflow: hidden;
+}
+
+.app-header {
+  flex: none;
+  height: var(--header-h);
+  padding: 0 14px;
+  padding-top: env(safe-area-inset-top);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+  z-index: 30;
+}
+.app-header .brand-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  background: none;
+}
+.app-header .title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.app-header .screen-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  line-height: 1.15;
+}
+.app-header .screen-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.avatar-btn {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(140deg, var(--red), var(--red-dark));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: var(--sh-1);
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px calc(var(--tabbar-h) + 22px);
+  scroll-padding-bottom: calc(var(--tabbar-h) + 22px);
+}
+/* full-bleed tabs (map/heat) manage their own padding */
+.app-body.flush {
+  padding: 0;
+  padding-bottom: var(--tabbar-h);
+  display: flex;
+  flex-direction: column;
+  /* The map's floating toolbar is `position: absolute`; without a positioned
+     ancestor here it would resolve against `.app` and slide up underneath the
+     app header. This element is the map screen's own coordinate space. */
+  position: relative;
+}
+
+/* ── Bottom tab bar ────────────────────────────────────────── */
+.tabbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--line);
+  z-index: 40;
+}
+.tabbar button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 700;
+  transition: color 0.15s ease;
+}
+.tabbar button svg {
+  width: 22px;
+  height: 22px;
+}
+.tabbar button.active {
+  color: var(--red);
+}
+.tabbar button.active::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  width: 22px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--gold);
+}
+.tabbar button .badge {
+  position: absolute;
+  top: 7px;
+  right: calc(50% - 16px);
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--red);
+  color: #fff;
+  font-size: 9.5px;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* ── Cards & sections ──────────────────────────────────────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+  padding: 16px;
+}
+.card + .card,
+.section + .section {
+  margin-top: 14px;
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 800;
+}
+.card-title .muted {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.section-label {
+  margin: 18px 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+/* On a phone the label spans the whole width and everything under it is
+   centred — tiles, quick actions, chip rows — so a left-aligned heading reads
+   as a mistake rather than as a hierarchy. Above 640px there is room for a
+   two-column feel and the label belongs on the left edge of its block. */
+@media (max-width: 640px) {
+  .section-label {
+    margin-left: 0;
+    margin-right: 0;
+    text-align: center;
+  }
+}
+
+/* hero / greeting card */
+.hero-card {
+  position: relative;
+  overflow: hidden;
+  border: none;
+  color: #fff;
+  background: linear-gradient(150deg, var(--red) 0%, var(--red-dark) 60%, var(--red-deep) 100%);
+  box-shadow: var(--sh-2);
+}
+.hero-card::after {
+  content: none;
+}
+.hero-card > * {
+  position: relative;
+  z-index: 1;
+}
+.hero-card .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+.hero-card h2 {
+  margin: 8px 0 4px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.4px;
+}
+.hero-card p {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* stat grid */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  box-shadow: var(--sh-1);
+}
+.stat .num {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+.stat .lbl {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.stat.accent .num {
+  color: var(--red);
+}
+
+/* quick actions */
+.qa-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.qa {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 4px;
+  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-1);
+  font-size: 10.5px;
+  font-weight: 700;
+  /* `align-items: center` centres the label's box but not the text inside it,
+     so a label that wrapped in a 4-across grid ("Ward Bulletin") came out
+     left-aligned under a centred icon. */
+  text-align: center;
+  line-height: 1.25;
+  color: var(--text-2);
+  transition: transform 0.12s ease;
+}
+.qa:active {
+  transform: scale(0.96);
+}
+.qa .ico {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  background: var(--red-tint);
+  color: var(--red);
+}
+.qa .ico svg {
+  width: 20px;
+  height: 20px;
+}
+.qa.gold .ico {
+  background: var(--red-tint);
+  color: var(--red);
+}
+.qa.dark .ico {
+  background: var(--black);
+  color: #fff;
+}
+
+/* ── Lists / rows ──────────────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  background: var(--card);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.row:first-child {
+  border-radius: var(--r-md) var(--r-md) 0 0;
+}
+.row:last-child {
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  border-bottom: none;
+}
+.row:only-child {
+  border-radius: var(--r-md);
+}
+.rows {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--sh-1);
+  background: var(--card);
+}
+.row .row-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--text-2);
+}
+.row .row-ico svg {
+  width: 19px;
+  height: 19px;
+}
+.row .row-main {
+  flex: 1;
+  min-width: 0;
+  /* `.row-main` is a `<span>`, blockified by the flex parent but not itself a
+     container that stacks its children — so `.row-title` and `.row-sub` ran
+     together on one line. `.post-main` already does this; rows did not. */
+  display: flex;
+  flex-direction: column;
+}
+.row .row-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  /* Wraps rather than truncating. The old `white-space: nowrap; overflow:
+     hidden; text-overflow: ellipsis` never produced an ellipsis: `overflow` and
+     `text-overflow` do not apply to an inline box, so all it did was stop the
+     text wrapping and let `.rows { overflow: hidden }` clip it mid-word —
+     "Granted — actions are au" with nothing to say there was more. */
+  overflow-wrap: anywhere;
+}
+.row .row-sub {
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 2px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+/* A badge is a fixed vocabulary word ("allowed", "blocked", "in progress"), so
+   it is the one part of a row that must never be squeezed to make room. */
+.row > .badge {
+  flex: none;
+}
+.row .chev {
+  flex: none;
+  color: var(--line-strong);
+}
+.row.destructive .row-title {
+  color: var(--danger);
+}
+/* Settings rows are a definition list — label, value, verdict — not a list of
+   things to open, so on a phone their text centres the way the section label
+   above them now does. Rows that navigate (Members, notifications, bulletins)
+   keep the left edge, which is where a reader scans a list. `.centred` is the
+   opt-in, because the two really are different kinds of row. */
+@media (max-width: 640px) {
+  .rows.centred .row {
+    align-items: flex-start;
+  }
+  .rows.centred .row-main {
+    align-items: center;
+    text-align: center;
+  }
+  /* Pinned to the top of the row rather than floating vertically centred: a
+     badge beside a title that wrapped to three lines reads as belonging to the
+     middle one, and it is the verdict on the whole row. */
+  .rows.centred .row > .badge {
+    margin-top: 1px;
+  }
+}
+
+/* Identity card at the top of Settings. Both halves are unbreakable strings —
+   an address like councillor.mp79@udf.test and a role token like
+   WARD_COUNCILLOR — so on a phone they cannot share one line: sharing it made
+   the badge paint over the address and split the scope code mid-token. The
+   badge takes its own row below 480px instead. */
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.profile-card .pc-main {
+  flex: 1;
+  min-width: 0;
+}
+.profile-card .pc-email {
+  font-weight: 800;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.profile-card .pc-sub {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.profile-card > .badge,
+.profile-card .pc-badge .badge {
+  flex: none;
+}
+/* The wrapper is invisible above 480px (the badge sits in the card's own row)
+   and becomes the badge's full-width line below it, so the pill keeps hugging
+   its text instead of stretching into a bar. */
+.profile-card .pc-badge {
+  display: contents;
+}
+@media (max-width: 480px) {
+  .profile-card {
+    flex-wrap: wrap;
+  }
+  .profile-card .pc-badge {
+    display: block;
+    flex: 1 0 100%;
+  }
+}
+
+/* member list card */
+.member-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-1);
+  text-align: left;
+}
+.member-card + .member-card {
+  margin-top: 9px;
+}
+.member-card:active {
+  transform: scale(0.99);
+}
+.member-avatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #fff;
+  background: linear-gradient(140deg, #4b5563, #1f2937);
+}
+.member-avatar.t-volunteer { background: linear-gradient(140deg, #22c55e, #15803d); }
+.member-avatar.t-donor { background: linear-gradient(140deg, #f0b429, #c98f00); color: #fff; }
+.member-avatar.t-activist { background: linear-gradient(140deg, #3b82f6, #1d4ed8); }
+.member-avatar.t-candidate { background: linear-gradient(140deg, #a855f7, #7e22ce); }
+.member-avatar.t-staff { background: linear-gradient(140deg, var(--red), var(--red-deep)); }
+.member-main {
+  flex: 1;
+  min-width: 0;
+}
+.member-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.member-meta {
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+/* ── Badges / chips / dots ─────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--pill);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  background: var(--paper);
+  color: var(--text-2);
+}
+.badge.tier { background: var(--black); color: #fff; }
+.badge.ok { background: var(--ok-tint); color: var(--ok); }
+.badge.warn { background: var(--warn-tint); color: var(--warn); }
+.badge.danger { background: var(--danger-tint); color: var(--danger); }
+.badge.info { background: var(--info-tint); color: var(--info); }
+/* follow-up chip tones (see lib/caseStatus.ts) — distinct hues from the status
+   tones above so a case's follow-up never reads as its lifecycle colour. */
+.badge.violet { background: var(--violet-tint); color: var(--violet); }
+.badge.teal { background: var(--teal-tint); color: var(--teal); }
+.badge.indigo { background: var(--indigo-tint); color: var(--indigo); }
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.danger { background: var(--danger); }
+.dot.mute { background: var(--line-strong); }
+
+/* Precise-location box (resident report + patrol add-stop). Shows a live
+   accuracy indicator while the fix tightens to ≤4 m, then the street + area. */
+.loc-box {
+  border: 1px solid var(--line, #e4e6eb);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--card-2, #f7f8fa);
+}
+.loc-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.loc-spin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong, #c7ccd6);
+  border-top-color: var(--accent, #2f6fed);
+  animation: loc-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes loc-spin { to { transform: rotate(360deg); } }
+.loc-place {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.loc-place .dot { margin-top: 5px; }
+.loc-place-text { min-width: 0; overflow-wrap: anywhere; }
+.loc-street svg { flex-shrink: 0; }
+.loc-street {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.loc-area { margin: 2px 0 0; }
+
+.upload-limit {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #e4e6eb);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #57534e);
+  overflow-wrap: anywhere;
+}
+.chip-size { font-size: 11px; font-weight: 600; }
+
+/* Chips wrap. The single horizontally-scrollable line was the reason a
+   two-word chip was reachable only by dragging — with nothing on screen to say
+   there was anything to drag to. `.nowrap` is the opt-out for strips that are a
+   short fixed vocabulary (the region row), where one scrolling line still beats
+   a wrapped block that pushes the content below the fold. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+}
+.chip-row.nowrap {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chip-row.nowrap::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 13px;
+  border-radius: var(--pill);
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.25;
+  transition: all 0.13s ease;
+}
+.chip.on {
+  background: var(--black);
+  border-color: var(--black);
+  color: #fff;
+}
+.chip svg { flex: none; }
+/** The tier dot inside a chip: colour as an identifier, not decoration. */
+.swatch-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* ── Controls ──────────────────────────────────────────────── */
+.segmented {
+  display: flex;
+  padding: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--pill);
+  gap: 3px;
+}
+.segmented button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--pill);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-2);
+  transition: all 0.15s ease;
+}
+.segmented button svg { flex: none; }
+/* A label too narrow to fit is dropped by the breakpoint that hides it, not
+   ellipsised: "Regi…" tells a reader less than the icon on its own. */
+.segmented .seg-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.segmented button.on {
+  background: var(--card);
+  color: var(--red);
+  box-shadow: var(--sh-1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: visible;
+}
+.field label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.field-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.geography-intro {
+  margin: -2px 0 10px;
+}
+.input,
+.select,
+.textarea {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 4px rgba(200, 16, 46, 0.12);
+}
+.search-wrap {
+  position: relative;
+}
+.search-wrap svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 17px;
+  height: 17px;
+  color: var(--text-3);
+}
+.search-wrap .input {
+  padding-left: 37px;
+  border-radius: var(--pill);
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slider-row .top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.slider-row .top .val {
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--red);
+}
+/* Sliders stacked inside a sheet. They are a group — one heading over three
+   controls — so the gap between them is tighter than the gap into them. */
+.slider-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* toggle switch */
+.switch {
+  position: relative;
+  flex: none;
+  width: 46px;
+  height: 27px;
+  border-radius: var(--pill);
+  background: var(--line-strong);
+  transition: background 0.18s ease;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+.switch.on {
+  background: var(--ok);
+}
+.switch.on::after {
+  transform: translateX(19px);
+}
+
+/* buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: var(--r-md);
+  font-size: 14px;
+  font-weight: 800;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-primary {
+  background: linear-gradient(140deg, var(--red), var(--red-dark));
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(200, 16, 46, 0.3);
+}
+.btn-gold {
+  background: linear-gradient(140deg, var(--red), var(--red-dark));
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(200, 16, 46, 0.3);
+}
+.btn-ghost {
+  background: var(--card);
+  border: 1.5px solid var(--line-strong);
+  color: var(--text-2);
+}
+.btn-danger {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.btn-block { width: 100%; }
+.btn-sm { padding: 8px 13px; font-size: 12.5px; border-radius: var(--r-sm); }
+
+/* FAB */
+.fab {
+  position: absolute;
+  right: 18px;
+  bottom: calc(var(--tabbar-h) + 18px);
+  width: 56px;
+  height: 56px;
+  border-radius: 19px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(140deg, var(--red), var(--red-dark));
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(200, 16, 46, 0.42);
+  z-index: 35;
+  transition: transform 0.14s ease;
+}
+.fab:active { transform: scale(0.94); }
+.fab svg { width: 24px; height: 24px; }
+
+/* ── Map / heat panes ──────────────────────────────────────── */
+.map-pane {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.map-pane > div:first-child {
+  position: absolute;
+  inset: 0;
+}
+/* One row, not a stack. These controls used to be up to four `.float-card`s
+   pinned down the top of the pane, which on a phone roofed over the map's
+   northern third and left the zoom buttons unreachable underneath. Everything
+   that is a SETTING rather than a mode now lives in a sheet, so what remains
+   fits on one line at every width this app runs at. */
+.map-controls {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: row;
+  pointer-events: none;
+}
+.map-controls > * { pointer-events: auto; }
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px;
+}
+.map-toolbar .segmented {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+}
+.tool-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--pill);
+  background: var(--paper);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-2);
+  transition: all 0.13s ease;
+}
+.tool-chip.on {
+  border-color: var(--black);
+  color: var(--text);
+}
+.tool-chip svg { flex: none; color: var(--text-3); }
+.tool-chip.on svg { color: var(--red); }
+/* The state a closed sheet is hiding: `· 2` filters, `3/6` tiers. */
+.tc-badge {
+  padding: 1px 6px;
+  border-radius: var(--pill);
+  background: var(--black);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.tc-label {
+  white-space: nowrap;
+}
+/* Below 520px the mode switch is icon-only. Measured, not guessed: three
+   labelled modes plus the two labelled sheet chips need ~506px of row, so on
+   every phone width this app runs at (360-430px) the labels can only exist by
+   ellipsising mid-word — which tells a reader less than the icon alone. The
+   words return from 520px up, where the 560px desktop column has room for
+   them. The buttons keep their `aria-label`, so nothing is lost to a screen
+   reader, and the Filters/Layers chips keep their words at every width
+   because a rarely opened sheet needs its name visible more than a mode a
+   member switches by recognisable glyph. */
+@media (max-width: 519px) {
+  .map-toolbar .seg-label { display: none; }
+  .map-toolbar .segmented button { padding: 7px 9px; }
+}
+
+.float-card {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-2);
+  padding: 10px 12px;
+}
+/* Left-hand tier legend. Each colour is a show/hide toggle for that tier, so
+   the legend is a control, not a caption: several tiers can be on at once.
+
+   Floating beside the map is only affordable on a wide screen — at phone widths
+   it covers the wards it is explaining, and the identical controls live in the
+   Layers sheet instead (same component, `.tier-legend.inline`). */
+.tier-legend {
+  display: none;
+}
+@media (min-width: 900px) {
+  .tier-legend:not(.inline) {
+    display: flex;
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+    flex-direction: column;
+    gap: 2px;
+    width: 150px;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--sh-2);
+    padding: 8px;
+  }
+}
+/* The same legend, laid out as ordinary sheet content. */
+.tier-legend.inline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tier-legend .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 2px 5px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.tier-legend .acts { display: inline-flex; gap: 2px; }
+.tier-legend .acts button {
+  border: 0;
+  background: transparent;
+  padding: 1px 3px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--red);
+  cursor: pointer;
+}
+.tier-legend .acts button:disabled {
+  color: var(--text-3);
+  opacity: 0.5;
+  cursor: default;
+}
+.tier-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: left;
+  text-transform: capitalize;
+  color: var(--text);
+  cursor: pointer;
+}
+.tier-toggle:active { background: var(--paper); }
+.tier-toggle .sw {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+}
+.tier-toggle.off { color: var(--text-3); }
+.tier-toggle.off .sw {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+}
+.tier-legend .divider {
+  border-top: 1px solid var(--line);
+  margin: 6px 2px 5px;
+}
+.tier-legend .key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.tier-legend .key .sw {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 2px;
+}
+.tier-legend .key .sw.bar { width: 46px; height: 8px; border-radius: 4px; }
+/* A boundary is drawn as a line on the map, so its key is a line here: a hollow
+   10px square reads as an unchecked checkbox sitting under the tier dots. */
+.tier-legend .key .sw.outline {
+  width: 20px;
+  height: 0;
+  background: transparent;
+  border-radius: 0;
+}
+.map-banner {
+  position: absolute;
+  /* Under the toolbar row, which owns the top edge of the pane. */
+  top: 62px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: calc(100% - 24px);
+  padding: 7px 14px;
+  border-radius: var(--pill);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+  box-shadow: var(--sh-2);
+}
+.map-banner.err { background: var(--danger); }
+.map-banner.load { background: rgba(20, 20, 20, 0.8); }
+
+/* ── Bottom sheet ──────────────────────────────────────────── */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 60;
+  animation: fadeIn 0.18s ease;
+}
+.sheet {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0;
+  width: min(100%, var(--app-w));
+  max-height: 88dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  box-shadow: var(--sh-3);
+  z-index: 61;
+  animation: slideUp 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sheet-handle {
+  flex: none;
+  width: 40px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--line-strong);
+  margin: 9px auto 0;
+}
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.sheet-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+}
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px calc(20px + env(safe-area-inset-bottom));
+}
+.sheet-foot {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--text-2);
+}
+.icon-btn svg { width: 17px; height: 17px; }
+
+@keyframes slideUp {
+  from { transform: translate(-50%, 100%); }
+  to { transform: translate(-50%, 0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Misc ──────────────────────────────────────────────────── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--text-3);
+  text-align: center;
+  font-size: 13px;
+}
+.empty .big { font-size: 34px; }
+
+.skeleton {
+  border-radius: var(--r-md);
+  background: linear-gradient(90deg, #efe9e6 25%, #f7f2ef 50%, #efe9e6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite;
+}
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tabbar-h) + 16px);
+  z-index: 70;
+  padding: 10px 18px;
+  border-radius: var(--pill);
+  background: var(--black);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--sh-3);
+  animation: fadeIn 0.2s ease;
+}
+.toast.ok { background: var(--ok); }
+.toast.err { background: var(--danger); }
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px;
+}
+.kv:last-child { border-bottom: none; }
+.kv .k { color: var(--text-3); font-weight: 600; }
+.kv .v { font-weight: 700; text-align: right; word-break: break-word; }
+
+/* ── Region sheet ──────────────────────────────────────────── */
+/* `Icon` takes no className or style, so direction is flipped by the wrapper:
+   one chevron glyph, pointing either way. */
+.flip-x {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+/* Ward councillor. The photo is fixed-width and square-clipped so a portrait
+   shot and a landscape one produce the same card height. */
+.leader-photo {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--paper);
+}
+.leader-main {
+  flex: 1;
+  min-width: 0;
+}
+.leader-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  word-break: break-word;
+}
+/* Progress bar. A `<span>` because it can sit inside a `.row-main` span, which
+   cannot hold a `<div>` without the HTML parser lifting it out. */
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.meter {
+  display: block;
+  width: 100%;
+  height: 7px;
+  border-radius: var(--pill);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  overflow: hidden;
+}
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--pill);
+  background: var(--ok);
+}
+/* Inside a project row the bar carries the percentage the `.badge` already
+   prints, so it reads as the party's red rather than as a green "done". */
+.row-main .meter { margin-top: 6px; }
+.row-main .meter-fill { background: var(--red); }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  /* Let Autocomplete dropdowns overflow the grid cell so they are never
+     clipped by the card or overlapped by the next section. */
+  overflow: visible;
+}
+.form-grid .full { grid-column: 1 / -1; }
+/* The combo wrapper must sit above subsequent siblings so its dropdown
+   overlays the next section-label / form-grid instead of being hidden. */
+.combo {
+  position: relative;
+  z-index: 10;
+}
+.combo .input {
+  padding-right: 34px;
+}
+@media (max-width: 640px) {
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form-grid .full {
+    grid-column: 1;
+  }
+  .form-grid .field {
+    min-width: 0;
+  }
+}
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Engagement layer — events, newsroom, mandates, party cards
+   ═══════════════════════════════════════════════════════════ */
+
+/* header: tappable brand + notification bell */
+.app-header .brand-btn {
+  transition: transform 0.12s ease;
+}
+.app-header .brand-btn:active {
+  transform: scale(0.94);
+}
+.bell-btn {
+  position: relative;
+  flex: none;
+}
+.bell-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--red);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--card);
+}
+/* unread marker on the Engage tab */
+.tab-dot {
+  position: absolute;
+  top: 9px;
+  right: calc(50% - 15px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+/* ── Engage tile grid ──────────────────────────────────────── */
+/* Replaces `.seg-wrap > Segmented`: one ten-item row that could not wrap, so at
+   phone widths the tail of it was reachable only by dragging a strip with
+   nothing on screen to say it could be dragged, and a two-word label was
+   clipped mid-word. `auto-fit` fits 3 tiles across at 375px and 4 at 412px,
+   each well clear of the 44px minimum tap target held everywhere else. */
+.tile-groups {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+/* The grid is a navigator, not the first thing on the page, so it does not get
+   the 18px breathing room a heading inside scrolled content needs. */
+.tile-groups .section-label:first-child {
+  margin-top: 2px;
+}
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 64px;
+  padding: 9px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--sh-1);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  transition: transform 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.tile:active { transform: scale(0.97); }
+.tile .ico {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--paper);
+  color: var(--text-2);
+}
+.tile.on {
+  border-color: var(--black);
+  color: var(--red);
+}
+.tile.on .ico {
+  background: var(--red-tint);
+  color: var(--red);
+}
+/* Wraps rather than truncating: "Partici…" is not a destination anyone can
+   recognise, and the tile is wide enough for the whole word on every layout
+   this grid produces. */
+.tile-label {
+  max-width: 100%;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+/* The live count moves off the label and onto the icon. Inline as `· 3` it was
+   the thing that made "Events · 3" too wide for a segmented button. */
+.tile-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--red);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+/* back navigation inside the More hub */
+.back-row {
+  margin-bottom: 4px;
+  padding: 8px 4px;
+  border-bottom: 1px solid transparent;
+}
+.back-row .back-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--text-2);
+  transform: rotate(180deg);
+}
+.back-row .row-title {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* plain vertical list (no dividers) */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* inline notices */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 10px 0;
+  padding: 11px 13px;
+  border-radius: var(--r-md);
+  background: var(--info-tint);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+}
+.banner svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--info);
+}
+.banner.err {
+  background: var(--danger-tint);
+  border-color: rgba(220, 38, 38, 0.2);
+  color: var(--danger);
+}
+.banner.err svg { color: var(--danger); }
+.banner.warn {
+  background: var(--warn-tint);
+  border-color: rgba(217, 119, 6, 0.2);
+  color: #92610a;
+}
+.banner.warn svg { color: var(--warn); }
+.banner.ok {
+  background: var(--ok-tint);
+  border-color: rgba(22, 163, 74, 0.2);
+  color: #14653a;
+}
+.banner.ok svg { color: var(--ok); }
+.banner strong { color: inherit; }
+/* home dashboard alert strip is a button */
+button.banner.alert-strip {
+  width: 100%;
+  align-items: center;
+  text-align: left;
+  background: var(--black);
+  border-color: var(--black);
+  color: rgba(255, 255, 255, 0.82);
+}
+button.banner.alert-strip svg { color: #fff; }
+button.banner.alert-strip strong { color: #fff; }
+button.banner.alert-strip span:nth-child(2) { flex: 1; }
+
+/* helper text */
+.hint-text {
+  margin: 10px 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+  /* Help text carries ward codes, emails and long tokens that have no break
+     point of their own; without this one of them pushes the paragraph past the
+     edge of its card and the rest of the line is lost. */
+  overflow-wrap: anywhere;
+}
+.mini-label {
+  margin: 0 4px 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-sub.tiny {
+  font-size: 11px;
+}
+
+/* paragraph text inside sheets */
+.sheet-text {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+.sheet-text.strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* link/QR hand-over box */
+.link-box {
+  padding: 12px 13px;
+  border-radius: var(--r-md);
+  background: var(--gold-tint);
+  border: 1px dashed rgba(201, 143, 0, 0.45);
+}
+.link-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #8a6a06;
+}
+.link-box code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: #fff;
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  line-height: 1.4;
+  word-break: break-all;
+  color: var(--text);
+}
+.link-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* consent rows on the registration form */
+.consent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.consent-row:last-child { border-bottom: none; }
+.consent-main { min-width: 0; }
+.consent-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.consent-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+/* ── Terms & Conditions (public /terms page + in-app gate) ─── */
+.terms-doc { font-size: 13.5px; line-height: 1.6; color: var(--text-2); }
+.terms-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.terms-updated { font-size: 11px; font-weight: 600; color: var(--text-3); }
+.terms-intro {
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.terms-section { margin: 0 0 15px; }
+.terms-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 5px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.1px;
+  color: var(--text);
+}
+.terms-section h4 svg { flex: none; color: var(--red); }
+.terms-section p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+.terms-skel {
+  padding: 28px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+/* required T&C checkbox on the registration form */
+.tc-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  cursor: pointer;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.tc-check input[type='checkbox'] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--red);
+  cursor: pointer;
+}
+.tc-check a { color: var(--red); font-weight: 700; text-decoration: none; }
+.tc-check a:hover { text-decoration: underline; }
+.tc-req {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: var(--pill);
+  background: var(--red-tint);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--red);
+  vertical-align: middle;
+}
+
+/* in-app acceptance gate — full-screen takeover before the shell */
+.terms-gate {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--paper);
+}
+.terms-gate-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 16px 14px;
+}
+.terms-gate-scroll .pub-card { margin-bottom: 0; }
+.terms-gate-foot {
+  flex: none;
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+.terms-gate-foot .banner { margin-bottom: 10px; }
+.terms-gate-alt {
+  display: block;
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-decoration: none;
+}
+.terms-gate-alt:hover { color: var(--red); text-decoration: underline; }
+
+/* forced password-change gate — reuses the .terms-gate shell */
+.pw-form { display: flex; flex-direction: column; gap: 16px; }
+.pw-field { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.pw-field label { font-size: 12.5px; font-weight: 700; color: var(--text-2); }
+.pw-field input {
+  width: 100%;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 13px;
+  padding: 13px 14px;
+  font-size: 15px;
+  background: var(--card);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.pw-field input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 4px rgba(200, 16, 46, 0.14);
+}
+.pw-hint { font-size: 11.5px; color: var(--text-3); }
+
+/* ── Supporter share card ──────────────────────────────────── */
+.sharecard-preview {
+  position: relative;
+  max-width: 420px;
+  margin: 12px auto 0;
+}
+.sharecard-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-1);
+}
+.sharecard-skel {
+  width: 100%;
+  aspect-ratio: 1080 / 1350;
+}
+.sharecard-busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.sharecard-popia {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.sharecard-popia svg { flex: none; margin-top: 1px; }
+
+/* search field inside the newsroom */
+.search-input {
+  width: 100%;
+  padding: 10px 38px;
+  border-radius: var(--pill);
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 13.5px;
+  outline: none;
+}
+.search-input:focus {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 3px var(--red-tint);
+}
+
+/* selected state for chip-style rows */
+.row.on {
+  background: var(--red-tint);
+  box-shadow: inset 0 0 0 1px rgba(200, 16, 46, 0.32);
+}
+.row.on .row-ico {
+  background: #fff;
+  color: var(--red);
+}
+
+/* notification rows */
+.row.notif.unread {
+  border-left: 3px solid var(--red);
+}
+.row.notif.unread .row-title { font-weight: 800; }
+
+/* compact hero variant for secondary screens */
+.hero-card.compact {
+  padding: 14px 16px;
+}
+.hero-card.compact h2 {
+  margin: 6px 0 3px;
+  font-size: 19px;
+}
+
+/* ── Event cards ───────────────────────────────────────────── */
+.event-card {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-1);
+  text-align: left;
+}
+.event-card:active { transform: scale(0.99); }
+.date-chip {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 13px;
+  background: linear-gradient(150deg, var(--red), var(--red-deep));
+  color: #fff;
+}
+.date-chip .d { font-size: 19px; font-weight: 900; line-height: 1; }
+.date-chip .m {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: rgba(255, 255, 255, 0.8);
+}
+.event-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.event-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  line-height: 1.3;
+}
+.event-sub { font-size: 11.5px; color: var(--text-3); }
+.event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--text-3);
+}
+
+/* ── Newsroom cards ────────────────────────────────────────── */
+.post-card {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-1);
+  text-align: left;
+}
+.post-card:active { transform: scale(0.99); }
+.post-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--black);
+  color: #fff;
+}
+.post-ico svg { width: 19px; height: 19px; }
+.post-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.post-kicker {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  color: var(--red);
+  /* "COMMUNITY NOTES · CPT-SC17 · WARD 79 · URGENT" is uppercase and
+     letter-spaced, so it needs more width than the same string in body case —
+     and `CPT-SC17` has no break point of its own. */
+  overflow-wrap: anywhere;
+}
+.post-title {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
+  overflow-wrap: anywhere;
+}
+.post-excerpt {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.post-foot {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-3);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ── Ward Candidate / Party ID card ────────────────────────── */
+/* The card face is now painted on a <canvas> by lib/cardRender (preview + export
+   share one renderer). The wrapper just frames it; the drop shadow and rounded
+   corners are drawn into the canvas itself. The legacy .id-* DOM rules below are
+   retained for any static markup that still references them. */
+.id-card-preview {
+  margin-top: 2px;
+  display: flex;
+  justify-content: center;
+}
+.id-card-preview canvas {
+  max-width: 100%;
+  height: auto;
+}
+.id-card {
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: linear-gradient(150deg, var(--red) 0%, var(--red-dark) 55%, var(--red-deep) 100%);
+  box-shadow: var(--sh-2);
+  color: #fff;
+}
+.id-flag {
+  flex: none;
+  width: 94px;
+  padding: 15px 12px;
+  background: var(--black);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.id-udf {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  line-height: 1;
+  color: #fff;
+}
+.id-party {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 2.4px;
+  color: #fff;
+}
+.id-tagline {
+  margin-top: auto;
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.6);
+}
+.id-body { flex: 1; min-width: 0; padding: 14px; }
+.id-name {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  /* A double-barrelled surname is the one thing on this card that can outrun
+     its column, and it is the member's own name — the last thing to clip. */
+  overflow-wrap: anywhere;
+}
+.id-rule {
+  width: 38px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--gold);
+  margin: 8px 0 2px;
+}
+.id-kv { display: flex; flex-direction: column; gap: 1px; margin-top: 6px; }
+.id-kv span {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+.id-kv strong { font-size: 12px; font-weight: 700; }
+.id-qr {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 14px 14px 0;
+}
+.id-qr img {
+  border-radius: 11px;
+  background: #fff;
+  padding: 6px;
+}
+.id-qr code {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.85);
+}
+@media (max-width: 400px) {
+  .id-card { flex-wrap: wrap; }
+  .id-flag {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  /* The wordmark is the one element on the card that must not be squeezed: a
+     shrunk "UDF" is a misprint, not a responsive layout. */
+  .id-udf,
+  .id-party { flex: none; }
+  /* Pushed to the flag's right edge, so if it does wrap it wraps right-aligned
+     against that edge instead of ragged-left under the wordmark. */
+  .id-tagline {
+    margin: 0 0 0 auto;
+    text-align: right;
+  }
+  .id-body { padding: 14px 14px 4px; }
+  .id-qr { padding: 0 14px 14px; }
+}
+
+.qr-img {
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+  box-shadow: var(--sh-1);
+}
+.qr-skeleton { border-radius: 12px; }
+
+/* ── Mission, vision & guide ───────────────────────────────── */
+.quote-card { display: flex; gap: 11px; align-items: flex-start; }
+.quote-card svg { flex: none; margin-top: 2px; color: var(--red); }
+.quote-card p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 600;
+  color: var(--text);
+}
+.quote-card.gold { background: linear-gradient(150deg, var(--red-tint), #fff); }
+.quote-card.gold svg { color: var(--red); }
+.pillar-card { margin-bottom: 10px; }
+.pillar-card .card-title { color: var(--red); margin-bottom: 8px; }
+.bullet-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.bullet-list li + li { margin-top: 4px; }
+.struct-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.struct { display: flex; gap: 10px; align-items: flex-start; }
+.struct-level {
+  flex: none;
+  width: 66px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: var(--black);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  text-align: center;
+}
+.struct-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.struct-body { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.struct-role { font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
+
+/* ── Public website pages (register · confirm · verify · join) ── */
+.pub {
+  min-height: 100dvh;
+  background: var(--paper);
+  padding-bottom: 40px;
+}
+.pub-head {
+  position: relative;
+  overflow: hidden;
+  padding: calc(20px + env(safe-area-inset-top)) 18px 24px;
+  background: var(--black);
+  color: #fff;
+  text-align: center;
+}
+.pub-head::after {
+  content: none;
+}
+.pub-flag {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.pub-flag b {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+.pub-flag span {
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 2.6px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+.pub-head h1 {
+  position: relative;
+  z-index: 1;
+  margin: 13px 0 5px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -0.4px;
+}
+.pub-head p {
+  position: relative;
+  z-index: 1;
+  margin: 0 auto;
+  max-width: 44ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+.pub-stripe {
+  height: 5px;
+  background: linear-gradient(90deg, var(--red) 0 50%, var(--black) 50% 100%);
+}
+.pub-body {
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 16px 14px 0;
+}
+.pub-card {
+  margin-bottom: 14px;
+  padding: 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+  overflow: visible;
+}
+.pub-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 4px;
+  text-align: center;
+}
+.pub-status .ring {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: var(--ok-tint);
+  color: var(--ok);
+}
+.pub-status .ring.warn { background: var(--warn-tint); color: var(--warn); }
+.pub-status .ring.err { background: var(--danger-tint); color: var(--danger); }
+.pub-status .ring svg { width: 36px; height: 36px; }
+.pub-status h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: -0.3px;
+}
+.pub-status p {
+  margin: 0;
+  max-width: 40ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.pub-roles { display: flex; flex-direction: column; gap: 8px; }
+.pub-role {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--paper);
+}
+.pub-role svg { flex: none; color: var(--red); }
+.pub-role b { font-size: 13px; font-weight: 800; }
+.pub-role span { font-size: 11.5px; color: var(--text-3); }
+.pub-actions { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; }
+.pub-actions .btn { justify-content: center; }
+.pub-foot {
+  margin-top: 24px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+  text-align: center;
+}
+.pub-foot a { color: var(--red); font-weight: 700; text-decoration: none; }
+.code-line {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--text);
+}
+
+/* ── Public home (non-member) ──────────────────────────────── */
+.ph-hero {
+  position: relative;
+  overflow: hidden;
+  padding: calc(30px + env(safe-area-inset-top)) 20px 32px;
+  background: linear-gradient(150deg, var(--red) 0%, var(--red-dark) 55%, var(--red-deep) 100%);
+  color: #fff;
+  text-align: center;
+}
+.ph-hero > * {
+  position: relative;
+  z-index: 1;
+}
+.ph-hero h1 {
+  margin: 16px 0 6px;
+  font-size: 27px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+.ph-mission {
+  margin: 0 auto 22px;
+  max-width: 46ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.86);
+}
+.ph-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 380px;
+  margin: 0 auto;
+}
+.ph-cta .btn {
+  justify-content: center;
+  font-weight: 800;
+}
+.ph-cta .btn-solid {
+  background: #fff;
+  color: var(--red-dark);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+}
+.ph-cta .btn-line {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+  color: #fff;
+}
+.ph-pet-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ph-scope {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--red);
+  background: var(--red-tint);
+  padding: 3px 9px;
+  border-radius: var(--pill);
+}
+.ph-closes {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.ph-pet-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+.ph-pet-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.ph-pet-target svg {
+  flex: none;
+  color: var(--red);
+}
+.ph-pet-body {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.ph-progress {
+  margin-top: 14px;
+}
+.ph-progress-bar {
+  height: 8px;
+  border-radius: var(--pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.ph-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: var(--pill);
+  background: linear-gradient(90deg, var(--red), var(--red-dark));
+  transition: width 0.4s ease;
+}
+.ph-progress-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.ph-progress-meta strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+}
+.ph-sign {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ph-sign-input {
+  flex: 1;
+  min-width: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: 11px 13px;
+  font-size: 14px;
+  background: var(--card);
+  text-transform: uppercase;
+}
+.ph-sign-input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 4px rgba(200, 16, 46, 0.12);
+}
+.ph-sign .btn {
+  flex: none;
+}
+.ph-sign-hint {
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.ph-sign-hint a {
+  color: var(--red);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* ── UDF static map ───────────────────────────────────────────
+   The three-layer boundary map (UdfStaticMap). Pure SVG with no tile
+   layer, so unlike the patrol map there is no vendor stylesheet
+   underneath this and every rule here is the whole appearance. */
+.udf-map {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Layer switch: Region / Subcouncil / Ward. */
+.udf-map-layers {
+  display: flex;
+  gap: 6px;
+}
+.udf-map-layer {
+  flex: 1;
+  /* 44px, the same minimum every other control in the app holds. */
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.udf-map-layer.on {
+  border-color: var(--red);
+  background: var(--red-tint);
+  color: var(--red);
+}
+
+/* Frame the SVG sits in. `position: relative` anchors the controls; the aspect
+   ratio is set inline from the map's own bounds so the SVG can fill it
+   absolutely and the viewBox can pan/zoom without ever resizing the container.
+   `touch-action: none` hands every touch to the pan/pinch handlers instead of
+   letting the page scroll swallow them. */
+.udf-map-frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.udf-map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+.udf-map-svg:active {
+  cursor: grabbing;
+}
+
+/* Shapes are interactive: pointer, and a focus ring for keyboard users.
+   `transition` on fill only — transitioning the stroke would animate the
+   2.2px jump the selected/standing-in outline makes and read as a wobble. */
+.udf-map-shape {
+  cursor: pointer;
+  transition: fill 120ms ease;
+}
+.udf-map-shape:hover {
+  fill-opacity: 0.75;
+}
+.udf-map-shape:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* The GPS dot pulses so it is findable among 116 filled shapes. Suppressed
+   under reduced-motion, where a permanently animating marker is exactly the
+   kind of thing the preference exists to stop. */
+.udf-map-fix circle:last-child {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: udf-map-pulse 2s ease-in-out infinite;
+}
+@keyframes udf-map-pulse {
+  50% {
+    transform: scale(1.45);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .udf-map-fix circle:last-child {
+    animation: none;
+  }
+}
+
+/* Map controls, bottom-right — where the old map put its geolocate button, so
+   the gesture is unchanged for anyone who used the previous one. Reset stacks
+   above locate and is only rendered once the reader has zoomed or panned. */
+.udf-map-tools {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.udf-map-locate,
+.udf-map-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--red);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(28, 25, 23, 0.16);
+}
+.udf-map-locate:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.udf-map-status {
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.udf-map-status-err {
+  color: var(--red);
+}
+.udf-map-status-idle {
+  color: var(--text-3);
+}
+
+/* ── Static map: place readout ──────────────────────────────────────────────
+   The names for wherever the reader is focused. Deliberately a plain key/value
+   stack rather than a heading: "Woodstock" matters more than the label telling
+   you it is a suburb, so the value carries the weight. */
+.udf-map-place {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.udf-map-place-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid var(--paper);
+  font-size: 13.5px;
+}
+.udf-map-place-row:first-child {
+  border-top: 0;
+}
+.udf-map-place-k {
+  color: var(--text-3);
+  flex: none;
+}
+.udf-map-place-v {
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ── Static map: the three case bars ────────────────────────────────────────
+   Replaces the heat overlay. Each bar states its own count above it, because
+   the number is the point — a bar height alone is only a comparison, and the
+   reader wants "34 open", not "more than the other two". */
+.udf-map-bars-card {
+  margin: 8px 10px 10px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.udf-map-bars-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.udf-map-bars-head > span:first-child {
+  font-weight: 700;
+  font-size: 14.5px;
+}
+.udf-map-bars-scope {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--red);
+  background: var(--gold-tint);
+  padding: 3px 8px;
+  border-radius: 99px;
+}
+.udf-map-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.udf-map-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.udf-map-bar-val {
+  font-weight: 800;
+  font-size: 17px;
+  /* Tabular figures so the three counts do not jitter sideways as they change. */
+  font-variant-numeric: tabular-nums;
+}
+.udf-map-bar-track {
+  width: 100%;
+  /* Fixed track height: the bars are proportioned against each other inside it,
+     so the card never changes height when the numbers do. */
+  height: 84px;
+  display: flex;
+  align-items: flex-end;
+  background: var(--paper);
+  border-radius: 7px 7px 0 0;
+}
+.udf-map-bar-fill {
+  width: 100%;
+  border-radius: 7px 7px 0 0;
+  transition: height 0.18s ease-out;
+}
+.udf-map-bar-fill.open {
+  background: var(--warn);
+}
+.udf-map-bar-fill.resolved {
+  background: var(--ok);
+}
+.udf-map-bar-fill.follow {
+  background: var(--violet);
+}
+.udf-map-bar-lab {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-align: center;
+  line-height: 1.25;
+}

@@ -1,0 +1,52 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:workflows": "node --import tsx scripts/workflow-regression.mjs",
+    "migrate": "tsx src/db/migrate.ts",
+    "seed": "tsx src/db/seed.ts",
+    "seed:sd": "tsx src/db/seedServiceDelivery.ts",
+    "seed:jobs": "tsx src/db/seedJobs.ts",
+    "seed:cpt": "tsx src/db/seedCapeTown.ts",
+    "map:export": "tsx scripts/export-udf-map.ts",
+    "seed:admin": "tsx src/db/seedAdmin.ts",
+    "seed:validation": "tsx src/db/seedValidation.ts",
+    "role:audit": "node scripts/role-audit.mjs",
+    "routes:inventory": "tsx scripts/route-inventory.ts",
+    "factory:reset": "tsx scripts/factory-reset.ts",
+    "provision:members": "tsx src/db/provisionMembers.ts"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "compression": "^1.7.5",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

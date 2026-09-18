@@ -1,0 +1,329 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import { createApp } from '../src/app.ts';
+import { signAccessToken } from '../src/auth/tokens.ts';
+import { env } from '../src/config/env.ts';
+import { pool } from '../src/db/pool.ts';
+import { Permission, Role, permissionsForRole, modulesForRole } from '../src/auth/permissions.ts';
+import * as reports from '../src/modules/transparency/service.ts';
+import { applyReportAction, reportWorkflowView } from '../src/modules/transparency/reportWorkflow.ts';
+import { parseCapturedMedia, validateMediaBatch, setMediaPolicy } from '../src/modules/transparency/mediaPolicy.ts';
+import { getDashboardActivity } from '../src/modules/crm/activityStats.ts';
+import { updateUser } from '../src/modules/crm/userService.ts';
+import * as patrols from '../src/modules/patrols/service.ts';
+import { createResidentReportSchema, updateResidentReportSchema } from '../src/modules/transparency/schemas.ts';
+import { addPatrolStopSchema } from '../src/modules/patrols/schemas.ts';
+import { sealRecord } from '../src/security/encryption.ts';
+import { getRegionSummary } from '../src/modules/geo/service.ts';
+import { regionSummarySchema } from '../src/modules/geo/schemas.ts';
+
+// All service calls share one rollback-only connection. Nested service
+// transactions become savepoints; no fixture or audit record is committed.
+if (env.isProduction || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(env.DATABASE_URL).hostname)) {
+  throw new Error('Workflow regression requires a local, non-production database');
+}
+const client = await pool.connect();
+const originalQuery = pool.query;
+const originalConnect = pool.connect;
+let savepoint = 0;
+pool.query = client.query.bind(client);
+pool.connect = async () => {
+  const name = `workflow_${++savepoint}`;
+  return {
+    query(text, values) {
+      if (text === 'BEGIN') return client.query(`SAVEPOINT ${name}`);
+      if (text === 'COMMIT') return client.query(`RELEASE SAVEPOINT ${name}`);
+      if (text === 'ROLLBACK') return client.query(`ROLLBACK TO SAVEPOINT ${name}`);
+      return client.query(text, values);
+    },
+    release() {},
+  };
+};
+let passed = 0;
+let failed = 0;
+const ctx = { ip: null, userAgent: null };
+async function test(name, run) {
+  const point = `test_${++savepoint}`;
+  await client.query(`SAVEPOINT ${point}`);
+  try {
+    await run();
+    passed++;
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failed++;
+    console.error(`FAIL ${name}: ${error.message}`);
+    await client.query(`ROLLBACK TO SAVEPOINT ${point}`);
+  }
+  await client.query(`RELEASE SAVEPOINT ${point}`);
+}
+const rejects = (run, status) => assert.rejects(run, (e) => e.status === status || e.statusCode === status);
+const suffix = randomUUID().slice(0, 8);
+const ward = `QA-${suffix}-W1`;
+const outsideWard = `QA-${suffix}-W2`;
+const region = `QA-${suffix}-SC`;
+const p = (role, wardCode = ward) => ({ sub: randomUUID(), role, wardCode, regionCodes: [region], permissions: [...permissionsForRole(role)] });
+const member = p(Role.MEMBER);
+const councilor = p(Role.WARD_COUNCILLOR);
+const peer = p(Role.WARD_COUNCILLOR);
+const outside = p(Role.WARD_COUNCILLOR, outsideWard);
+const admin = p(Role.NATIONAL_ADMIN, null);
+const memberId = randomUUID();
+const actor = { actorId: admin.sub, actorRole: admin.role, permissions: admin.permissions };
+let report;
+const apply = (input, principal = councilor) => applyReportAction(report.id, updateResidentReportSchema.parse(input), principal, ctx);
+const photo = { captureMode: 'photo', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC' };
+
+try {
+  await client.query('BEGIN');
+  await client.query("INSERT INTO regions(code,name,level) VALUES ($1,'Regression subcouncil','subcouncil')", [region]);
+  await client.query("INSERT INTO regions(code,name,level,parent_code) VALUES ($1,'Ward QA1','ward',$3),($2,'Ward QA2','ward',$3)", [ward, outsideWard, region]);
+  for (const principal of [member, councilor, peer, outside, admin]) {
+    const sealed = await sealRecord(principal.sub, { email: `${principal.sub}@example.invalid`, fullName: 'Regression Councilor' });
+    await client.query('INSERT INTO users(id,password_hash,role,ward_code,region_codes,sealed_pii) VALUES ($1,$2,$3,$4,$5,$6)',
+      [principal.sub, 'not-a-login-hash', principal.role, principal.wardCode, principal.regionCodes, JSON.stringify(sealed)]);
+  }
+  await client.query("INSERT INTO members(id,ward,status,tier) VALUES ($1,$2,'active','staff')", [memberId, ward]);
+  await client.query('UPDATE users SET member_id=$2 WHERE id=$1', [councilor.sub, memberId]);
+  await client.query('UPDATE media_capture_policy SET photo=true,video=true,voice=true WHERE singleton');
+
+  await test('report create retries are idempotent', async () => {
+    const input = createResidentReportSchema.parse({ category: 'Other', message: 'Regression report', requestId: randomUUID() });
+    report = await reports.createResidentReport(input, member, ctx);
+    assert.equal((await reports.createResidentReport(input, member, ctx)).id, report.id);
+    assert.equal(report.wardCode, ward);
+    assert.equal(report.routed, true);
+    // Make assignment deterministic even if peer users share creation timestamps.
+    await client.query('UPDATE resident_reports SET councillor_user_id=$2 WHERE id=$1', [report.id, councilor.sub]);
+  });
+  await test('unrelated member and out-of-ward staff cannot open report', async () => {
+    await rejects(() => reports.getResidentReport(report.id, outside), 403);
+    await rejects(() => reports.getResidentReport(report.id, p(Role.MEMBER)), 403);
+  });
+  await test('resolution requires acknowledgment', () => rejects(() => apply({ action: 'resolve', feedback: 'Done' }), 409));
+  await test('acknowledgment is versioned and retry-safe', async () => {
+    const input = { action: 'acknowledge', expectedVersion: 0, requestId: randomUUID() };
+    await apply(input);
+    await apply(input);
+    assert.equal((await reportWorkflowView(report.id, councilor)).version, 1);
+    await rejects(() => apply({ feedback: 'Stale', expectedVersion: 0 }), 409);
+  });
+  await test('contact requires method, target and outcome', async () => {
+    await rejects(() => apply({ action: 'contact', feedback: 'Called' }), 400);
+    await rejects(() => apply({ action: 'contact', contactMethod: 'other', contactTarget: 'Office', feedback: 'Called' }), 400);
+    await apply({ action: 'contact', contactMethod: 'phone', contactTarget: 'Service office', feedback: 'Call logged', internalNote: 'Private staff note', externalReference: 'REF-PRIVATE-12345' });
+  });
+  await test('reference encrypted at rest and masked for unassigned peer', async () => {
+    const row = (await client.query('SELECT sealed_reference FROM resident_reports WHERE id=$1', [report.id])).rows[0];
+    assert.ok(!JSON.stringify(row.sealed_reference).includes('REF-PRIVATE-12345'));
+    assert.equal((await reportWorkflowView(report.id, councilor)).externalReference, 'REF-PRIVATE-12345');
+    assert.equal((await reportWorkflowView(report.id, member)).externalReference, 'REF-PRIVATE-12345');
+    assert.notEqual((await reportWorkflowView(report.id, peer)).externalReference, 'REF-PRIVATE-12345');
+    await rejects(() => apply({ externalReference: 'REPLACEMENT' }, peer), 403);
+  });
+  await test('member history excludes staff-only notes and contact targets', async () => {
+    const view = await reportWorkflowView(report.id, member);
+    assert.ok(view.events.every((e) => !e.internalNote && !e.contactTarget));
+    await apply({ internalNote: 'Hidden standalone note' });
+    assert.ok(!(await reportWorkflowView(report.id, member)).events.some((e) => e.action === 'internal_note'));
+  });
+  await test('follow-up validates future deadline', async () => {
+    await rejects(() => apply({ action: 'follow_up', feedback: 'Waiting' }), 400);
+    await rejects(() => apply({ action: 'follow_up', feedback: 'Waiting', followUpAt: '2020-01-01T00:00:00Z' }), 400);
+    await apply({ action: 'follow_up', feedback: 'Waiting', followUpAt: new Date(Date.now() + 86400000).toISOString() });
+  });
+  await test('member confirmation and reopening preserve lifecycle', async () => {
+    await apply({ action: 'resolve', feedback: 'Work completed' });
+    await rejects(() => apply({ action: 'confirm' }, councilor), 403);
+    await apply({ action: 'confirm' }, member);
+    assert.ok((await reportWorkflowView(report.id, member)).confirmedAt);
+    await apply({ action: 'request_follow_up', feedback: 'Still broken' }, member);
+    const view = await reports.getResidentReport(report.id, member);
+    assert.equal(view.status, 'in_progress');
+    assert.equal(view.confirmedAt, null);
+    assert.equal(view.resolvedAt, null);
+  });
+  await test('member actions reject staff fields and revoked writes', async () => {
+    await rejects(() => apply({ action: 'request_follow_up', feedback: 'Check', internalNote: 'Not allowed' }, member), 400);
+    await rejects(() => apply({ feedback: 'Not allowed' }, { ...councilor, permissions: [] }), 403);
+  });
+  await test('media parsing enforces format, base64, mode and size', async () => {
+    assert.equal(parseCapturedMedia(photo.dataUrl, 'photo').kind, 'photo');
+    assert.equal(parseCapturedMedia('data:audio/webm;codecs=opus;base64,AQID', 'voice_note').kind, 'voice');
+    for (const [data, mode] of [['data:image/svg+xml;base64,AQID', 'photo'], [photo.dataUrl, 'video'], ['data:image/png;base64,A', 'photo'], ['x'.repeat(8 * 1024 * 1024 + 1), 'photo']]) {
+      assert.throws(() => parseCapturedMedia(data, mode));
+    }
+    await rejects(() => validateMediaBatch(Array.from({ length: 3 }, () => ({ captureMode: 'photo', dataUrl: 'x'.repeat(8 * 1024 * 1024) }))), 400);
+  });
+  await test('disabled capture rejects attachments without creating a report', async () => {
+    await setMediaPolicy({ photo: false, video: true, voice: true }, admin);
+    const before = (await reports.listResidentReports(member)).total;
+    await rejects(() => reports.createResidentReport(createResidentReportSchema.parse({ category: 'Other', message: 'Blocked photo', media: [photo] }), member, ctx), 403);
+    assert.equal((await reports.listResidentReports(member)).total, before);
+    await validateMediaBatch([]);
+    await setMediaPolicy({ photo: true, video: true, voice: true }, admin);
+    await rejects(() => setMediaPolicy({ photo: false, video: false, voice: false }, councilor), 403);
+  });
+  await test('dashboard totals exceed pagination and sum correctly', async () => {
+    await client.query("INSERT INTO resident_reports(ref_no,user_id,ward_code,category,message) SELECT $1 || n,$2,$3,'Other','Aggregate fixture' FROM generate_series(1,205) n", [suffix, member.sub, ward]);
+    const list = await reports.listResidentReports(councilor, { scope: 'inbox', limit: 1 });
+    const { modules } = await getDashboardActivity(councilor);
+    assert.equal(list.items.length, 1);
+    assert.equal(modules.reports.total, list.total);
+    assert.equal(modules.reports.total, modules.reports.byStatus.reduce((n, r) => n + r.value, 0));
+    assert.equal(modules.reports.dailyCreated.length, 30);
+    assert.equal((await getDashboardActivity({ ...councilor, permissions: [] })).modules.reports, null);
+    assert.equal((await getDashboardActivity(outside)).modules.reports.total, 0);
+  });
+  await test('inactive councilor counts as unassigned', async () => {
+    const before = (await getDashboardActivity(councilor)).modules.reports.unassigned;
+    await client.query('UPDATE users SET is_active=false WHERE id=$1', [councilor.sub]);
+    assert.equal((await reportWorkflowView(report.id, member)).assigned, false);
+    const after = (await getDashboardActivity(councilor)).modules.reports.unassigned;
+    await client.query('UPDATE users SET is_active=true WHERE id=$1', [councilor.sub]);
+    assert.equal(after, before + 1);
+  });
+  await test('managed public profile retains linked member identity', async () => {
+    await updateUser(councilor.sub, { bio: 'Regression biography' }, actor);
+    const profile = await reports.councillorForWard(ward);
+    assert.equal(profile.memberId, memberId);
+    assert.equal(profile.bio, 'Regression biography');
+    const summary = await getRegionSummary(regionSummarySchema.parse({ code: region }), { regions: [] });
+    assert.equal(summary.children.find((r) => r.code === ward).councillor.memberId, memberId);
+  });
+  await test('ward moves retire old profile and publish the new ward', async () => {
+    await updateUser(councilor.sub, { wardCode: outsideWard }, actor);
+    assert.equal(await reports.councillorForWard(ward), null);
+    assert.equal((await reports.councillorForWard(outsideWard)).bio, 'Regression biography');
+    await updateUser(councilor.sub, { isActive: false }, actor);
+    assert.equal(await reports.councillorForWard(outsideWard), null);
+    await updateUser(councilor.sub, { isActive: true, wardCode: ward }, actor);
+  });
+  await test('patrol track retry, completion and stop follow-up', async () => {
+    const patrol = await patrols.createPatrol({ mode: 'walk', wardCode: ward }, councilor, ctx);
+    const point = { seq: 0, latitude: -34, longitude: 18.6, accuracyM: 5, recordedAt: new Date() };
+    const first = await patrols.addTrackPoint(patrol.id, point, councilor);
+    assert.equal((await patrols.addTrackPoint(patrol.id, point, councilor)).id, first.id);
+    await rejects(() => patrols.addTrackPoint(patrol.id, { ...point, longitude: 18.7 }, councilor), 409);
+    await patrols.addTrackPoint(patrol.id, { ...point, seq: 1, longitude: 18.6001, recordedAt: new Date(point.recordedAt.getTime() + 4000) }, councilor);
+    assert.equal((await patrols.getPatrol(patrol.id, councilor)).nextTrackSeq, 2);
+    const stopInput = addPatrolStopSchema.parse({ latitude: -34, longitude: 18.6, arrivedAt: new Date(), requestId: randomUUID(), title: 'Service visit' });
+    const stop = await patrols.addStop(patrol.id, stopInput, councilor, ctx);
+    assert.equal((await patrols.addStop(patrol.id, stopInput, councilor, ctx)).id, stop.id);
+    await rejects(() => patrols.endPatrol(patrol.id, {}, outside, ctx), 403);
+    const finish = { requestId: randomUUID(), summary: 'Walk completed' };
+    const done = await patrols.endPatrol(patrol.id, finish, councilor, ctx);
+    assert.equal(done.distanceSource, 'gps');
+    assert.ok(done.distanceM > 0 && done.distanceM < 20);
+    assert.equal((await patrols.endPatrol(patrol.id, finish, councilor, ctx)).id, patrol.id);
+    await rejects(() => patrols.addTrackPoint(patrol.id, { ...point, seq: 2 }, councilor), 409);
+    await rejects(() => patrols.updatePatrol(patrol.id, { status: 'active' }, councilor, ctx), 409);
+    await rejects(() => patrols.updatePatrolStop(patrol.id, stop.id, { callStatus: 'completed' }, councilor, ctx), 400);
+    const updated = await patrols.updatePatrolStop(patrol.id, stop.id, { callStatus: 'completed', note: 'Resolved on visit' }, councilor, ctx);
+    assert.ok(updated.completedAt);
+    assert.equal(updated.followUpAt, null);
+    const stillCompleted = await patrols.updatePatrolStop(patrol.id, stop.id, { followUpAt: new Date(Date.now() + 86400000).toISOString() }, councilor, ctx);
+    assert.equal(stillCompleted.followUpAt, null);
+    const reopened = await patrols.updatePatrolStop(patrol.id, stop.id, { callStatus: 'in_progress', followUpAt: new Date(Date.now() + 86400000).toISOString() }, councilor, ctx);
+    assert.ok(reopened.followUpAt);
+    assert.equal(reopened.completedAt, null);
+  });
+  await test('patrol with no GPS retains unknown distance; manual zero is real', async () => {
+    const first = await patrols.createPatrol({ mode: 'walk', wardCode: ward }, councilor, ctx);
+    assert.equal((await patrols.endPatrol(first.id, {}, councilor, ctx)).distanceM, null);
+    const second = await patrols.createPatrol({ mode: 'walk', wardCode: ward }, councilor, ctx);
+    const zero = await patrols.endPatrol(second.id, { distanceM: 0 }, councilor, ctx);
+    assert.equal(zero.distanceM, 0);
+    assert.equal(zero.distanceSource, 'manual');
+  });
+  await test('planned patrol transitions and CRM completion measure saved GPS', async () => {
+    const planned = await patrols.createPatrol({ mode: 'walk', wardCode: ward, plannedDate: new Date() }, councilor, ctx);
+    assert.equal(planned.status, 'planned');
+    assert.equal(planned.startedAt, null);
+    await rejects(() => patrols.updatePatrol(planned.id, { status: 'completed' }, councilor, ctx), 409);
+    await patrols.updatePatrol(planned.id, { status: 'active' }, councilor, ctx);
+    const point = { latitude: -34, longitude: 18.6, accuracyM: 5, recordedAt: new Date(), seq: 0 };
+    await patrols.addTrackPoint(planned.id, point, councilor);
+    await patrols.addTrackPoint(planned.id, { ...point, seq: 1, longitude: 18.6001, recordedAt: new Date(point.recordedAt.getTime() + 4000) }, councilor);
+    const done = await patrols.updatePatrol(planned.id, { status: 'completed' }, councilor, ctx);
+    assert.ok(done.distanceM > 0);
+    assert.equal(done.distanceSource, 'gps');
+  });
+  await test('patrol aggregates span pages and preserve visibility and null distances', async () => {
+    await client.query("INSERT INTO patrols(ward_code,mode,status,purpose) SELECT $1,'walk','active','Pagination fixture ' || n FROM generate_series(1,205) n", [ward]);
+    const list = await patrols.listPatrols(councilor, { limit: 1, offset: 0 });
+    const { modules } = await getDashboardActivity(councilor, 'patrols');
+    assert.equal(modules.patrols.total, list.total);
+    assert.ok(list.total > 200);
+    assert.equal(modules.patrols.unknownDistance30d, 1);
+    assert.ok(modules.patrols.distanceM30d > 0);
+    assert.equal((await getDashboardActivity(outside, 'patrols')).modules.patrols.total, 0);
+    await client.query("UPDATE patrols SET visibility='private' WHERE ward_code=$1", [ward]);
+    assert.equal((await getDashboardActivity({ ...member, permissions: [Permission.PATROL_READ] }, 'patrols')).modules.patrols.total, 0);
+    await client.query("UPDATE patrols SET visibility='members' WHERE ward_code=$1", [ward]);
+  });
+  await test('report attachments enforce module permissions, ownership and territory', async () => {
+    const mediaId = randomUUID();
+    const storageKey = relative(process.cwd(), fileURLToPath(new URL('../../frontend/public/favicon.ico', import.meta.url)));
+    await client.query('INSERT INTO media_assets(id,storage_key,content_type,hash,created_by) VALUES ($1,$2,$3,$4,$5)', [mediaId, storageKey, 'image/x-icon', '0'.repeat(64), member.sub]);
+    await client.query('INSERT INTO resident_report_media(report_id,media_asset_id) VALUES ($1,$2)', [report.id, mediaId]);
+    assert.ok((await reports.loadMediaForPrincipal(mediaId, member)).buffer.length);
+    assert.ok((await reports.loadMediaForPrincipal(mediaId, councilor)).buffer.length);
+    await rejects(() => reports.loadMediaForPrincipal(mediaId, outside), 403);
+    await rejects(() => reports.loadMediaForPrincipal(mediaId, { ...member, permissions: [] }), 403);
+    await rejects(() => reports.loadMediaForPrincipal(mediaId, { ...councilor, permissions: [] }), 403);
+  });
+  const app = createApp();
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    await test('patrol stats route uses authentication and patrol read permission', async () => {
+      assert.equal((await fetch(`${base}/api/patrols/stats`)).status, 401);
+      const response = await fetch(`${base}/api/patrols/stats`, { headers: { Authorization: `Bearer ${signAccessToken(councilor)}` } });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).total, (await getDashboardActivity(councilor, 'patrols')).modules.patrols.total);
+      await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1', [councilor.sub, [Permission.PATROL_READ]]);
+      assert.equal((await fetch(`${base}/api/patrols/stats`, { headers: { Authorization: `Bearer ${signAccessToken(councilor)}` } })).status, 403);
+      await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1', [councilor.sub, []]);
+    });
+    await test('media policy supports cross-origin PUT preflight', async () => {
+      const response = await fetch(`${base}/api/transparency/media-policy`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'PUT' } });
+      assert.ok(response.headers.get('access-control-allow-methods')?.split(',').includes('PUT'));
+    });
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+
+  if (process.argv.includes('--browser') && !failed) {
+    const harness = express();
+    let queue = Promise.resolve();
+    harness.use((_req, res, next) => {
+      const previous = queue;
+      queue = new Promise((resolve) => res.once('finish', resolve));
+      void previous.then(next);
+    });
+    harness.get('/api/qa-session', (req, res) => {
+      const principal = req.query.role === 'member' ? member : req.query.role === 'councilor' ? councilor : admin;
+      res.json({ accessToken: signAccessToken(principal), permissions: principal.permissions, enabledModules: modulesForRole(principal.role), ward, reportId: report.id });
+    });
+    harness.use(app);
+    const browserServer = harness.listen(4000, '127.0.0.1');
+    await new Promise((resolve) => browserServer.once('listening', resolve));
+    console.log('Rollback-only browser API ready on http://127.0.0.1:4000; fixtures expire in 15 minutes.');
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 15 * 60 * 1000);
+      process.once('SIGTERM', () => { clearTimeout(timer); resolve(); });
+      process.once('SIGINT', () => { clearTimeout(timer); resolve(); });
+    });
+    await new Promise((resolve) => browserServer.close(resolve));
+  }
+} finally {
+  await client.query('ROLLBACK');
+  pool.query = originalQuery;
+  pool.connect = originalConnect;
+  client.release();
+  await pool.end();
+}
+console.log(`Workflow regression: ${passed} passed, ${failed} failed. All fixtures rolled back.`);
+if (failed) process.exitCode = 1;

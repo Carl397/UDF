@@ -1,0 +1,56 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java (Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Build static web app for the native shell
+        env:
+          # Point the bundled app at your deployed backend.
+          NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE || 'https://crm.udf-party.co.za/api' }}
+        run: npm run build:mobile
+
+      - name: Add + sync Android platform
+        run: |
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Install UDF brand assets + native hardening overrides
+        run: node scripts/prepare-android-assets.mjs
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: udf-debug-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk

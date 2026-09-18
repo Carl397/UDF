@@ -1,0 +1,38 @@
+{
+  "name": "UDF Party",
+  "short_name": "UDF",
+  "description": "Official mobile app of the UDF party — members, map, heat-map analytics and organizing tools.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#C8102E",
+  "theme_color": "#C8102E",
+  "categories": ["politics", "social", "productivity"],
+  "icons": [
+    {
+      "src": "/brand/udf-illustration.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/udf-illustration.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/udf-illustration.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Map", "url": "/?tab=map" },
+    { "name": "Heat Map", "url": "/?tab=heat" },
+    { "name": "Members", "url": "/?tab=members" }
+  ]
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RELEASE network security config (overrides src/main for `assembleRelease`).
+
+  Hardening vs. debug:
+    • cleartextTrafficPermitted="false" — HTTPS only; no plaintext HTTP.
+    • Trust the system CA store by default (works with a real CA-signed cert,
+      e.g. Let's Encrypt once a real domain is pointed at the server).
+
+  Production targets https://crm.udf-party.co.za with a publicly trusted
+  Let's Encrypt certificate. Release builds trust only the Android system CA
+  store; they do not bundle or trust the legacy self-signed IP certificate.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

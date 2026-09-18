@@ -1,0 +1,156 @@
+/* UDF member sign-in — clean corporate card on a light neutral field. */
+
+.udf-login {
+  --red: #c8102e;
+  --red-dark: #a00d24;
+  --black: #141414;
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(1100px 560px at 50% -12%, rgba(200, 16, 46, 0.08), transparent 62%),
+    linear-gradient(180deg, #ffffff 0%, #f6f3f1 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+}
+.udf-login * {
+  box-sizing: border-box;
+}
+.udf-login-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border: 1px solid #ece5e1;
+  border-radius: 22px;
+  padding: 32px 26px 26px;
+  box-shadow: 0 18px 50px rgba(28, 25, 23, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+}
+.udf-login-logo {
+  /* Card is a column flexbox, so horizontal centering is the cross axis:
+     `justify-self` (a grid property) is ignored here — use `align-self`. */
+  align-self: center;
+}
+.udf-login-title {
+  margin: 4px 0 0;
+  font-size: 23px;
+  font-weight: 900;
+  color: var(--black);
+  letter-spacing: -0.3px;
+}
+.udf-login-sub {
+  margin: -8px 0 4px;
+  color: #6b6b6b;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.udf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.udf-field label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #333;
+}
+.udf-field input {
+  width: 100%;
+  border: 1.5px solid #e3d9d5;
+  border-radius: 13px;
+  padding: 13px 14px;
+  font-size: 15px;
+  background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.udf-field input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 4px rgba(200, 16, 46, 0.14);
+}
+.udf-login-error {
+  background: #fdecec;
+  color: #a00d24;
+  border: 1px solid #f5c6c6;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  text-align: left;
+}
+.udf-login-submit {
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  padding: 14px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(140deg, var(--red), var(--red-dark));
+  box-shadow: 0 10px 26px rgba(200, 16, 46, 0.32);
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.udf-login-submit:active {
+  transform: translateY(1px);
+}
+.udf-login-submit:disabled {
+  filter: grayscale(0.3) brightness(0.98);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.udf-login-alt {
+  font-size: 13px;
+  color: #6b6b6b;
+}
+.udf-login-alt a {
+  color: var(--red);
+  font-weight: 700;
+  text-decoration: none;
+}
+/* Onboarding (FR-P): OTP hint under the password field + "email me a code". */
+.udf-otp-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #9a8f8b;
+}
+.udf-login-resend {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--red);
+  padding: 0;
+  margin-top: -6px;
+}
+.udf-login-resend:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.udf-login-resend:disabled {
+  color: #b8aca8;
+  cursor: not-allowed;
+}
+.udf-otp-msg {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+.udf-otp-msg.ok {
+  background: #eaf7ee;
+  color: #1c6b34;
+  border: 1px solid #bfe6cb;
+}
+.udf-otp-msg.err {
+  background: #fdecec;
+  color: #a00d24;
+  border: 1px solid #f5c6c6;
+}

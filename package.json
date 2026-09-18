@@ -1,0 +1,29 @@
+{
+  "name": "party-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise-grade political party platform: members, geo map, heat map, 3-layer encryption.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:workflows": "npm run test:workflows --workspace backend && node --import tsx frontend/scripts/workflow-client-regression.mjs",
+    "caps:check": "npm run caps:check --workspace frontend",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm run migrate --workspace backend",
+    "db:seed": "npm run seed --workspace backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

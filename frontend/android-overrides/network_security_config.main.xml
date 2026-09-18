@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG / default network security config.
+  Allows cleartext (HTTP) traffic so the debug WebView can reach the local
+  backend at http://10.0.2.2:4000 (emulator) or http://<LAN_IP>:4000.
+
+  Production builds target https://crm.udf-party.co.za and trust the Android
+  system CA store. The legacy self-signed IP origin remains available only to
+  already-fielded APKs that bundled its certificate.
+
+  `assembleRelease` overrides this with src/release/res/xml/
+  network_security_config.xml, which disables cleartext (HTTPS only). Do not
+  ship a release build with cleartext enabled.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>
