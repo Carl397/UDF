@@ -31,6 +31,10 @@ frontend/ios/
 !.env.example
 *.pem
 *.key
+*.jks
+*.keystore
+*.p12
+keystore.properties
 # …except the Android trust anchor: that is the server's PUBLIC certificate
 # (no private key material) and both network security configs reference it, so
 # the APK build must be reproducible from a clean clone.

@@ -5,9 +5,22 @@ apply plugin: 'com.android.application'
 // absent, the release build is produced UNSIGNED (dev/CI convenience) — a real
 // release must be signed, so the deploy runbook generates the keystore first.
 def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (!keystorePropertiesFile.exists()) {
+    keystorePropertiesFile = rootProject.file('../../secrets/android/keystore.properties')
+}
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.project == project && it.name.toLowerCase().contains('release') }) {
+        if (!keystorePropertiesFile.exists() ||
+            ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].any { !keystoreProperties[it] } ||
+            !rootProject.file(keystoreProperties['storeFile']).isFile()) {
+            throw new GradleException('Release signing is required. Configure the existing upload key; never ship an unsigned or debug-signed release.')
+        }
+    }
 }
 
 android {
@@ -17,8 +30,8 @@ android {
         applicationId "com.udf.party"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -29,7 +42,7 @@ android {
     signingConfigs {
         release {
             if (keystorePropertiesFile.exists()) {
-                storeFile file(keystoreProperties['storeFile'])
+                storeFile rootProject.file(keystoreProperties['storeFile'])
                 storePassword keystoreProperties['storePassword']
                 keyAlias keystoreProperties['keyAlias']
                 keyPassword keystoreProperties['keyPassword']
@@ -80,4 +93,24 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+// Use the same official bundletool dependency as AGP to inspect the built AAB.
+tasks.register('validateReleaseBundle', JavaExec) {
+    dependsOn 'bundleRelease'
+    classpath = rootProject.buildscript.configurations.classpath
+    mainClass = 'com.android.tools.build.bundletool.BundleToolMain'
+    args 'validate', "--bundle=${layout.buildDirectory.get()}/outputs/bundle/release/app-release.aab"
+}
+
+tasks.register('dumpReleaseManifest', JavaExec) {
+    dependsOn 'validateReleaseBundle'
+    classpath = rootProject.buildscript.configurations.classpath
+    mainClass = 'com.android.tools.build.bundletool.BundleToolMain'
+    args 'dump', 'manifest', "--bundle=${layout.buildDirectory.get()}/outputs/bundle/release/app-release.aab", '--module=base'
+    def manifestOutput = new ByteArrayOutputStream()
+    standardOutput = manifestOutput
+    doLast {
+        file("${layout.buildDirectory.get()}/outputs/bundle/release/AndroidManifest.xml").text = manifestOutput.toString('UTF-8')
+    }
 }

@@ -8,7 +8,7 @@
  *
  * Safe to re-run; no-ops with a warning if the android project is missing.
  */
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -138,4 +138,35 @@ if (existsSync(overridesRoot)) {
   );
 }
 
+// Keep regenerated Capacitor 6 projects on the API 36-compatible toolchain.
+function updateAndroidConfig(relativePath, changes) {
+  const path = join(androidRoot, relativePath);
+  const original = readFileSync(path, 'utf8');
+  let updated = original;
+  for (const [pattern, replacement] of changes) {
+    if ((updated.match(pattern) ?? []).length !== 1) {
+      throw new Error(`Expected one toolchain setting in ${relativePath}: ${pattern}`);
+    }
+    updated = updated.replace(pattern, replacement);
+  }
+  if (updated !== original) writeFileSync(path, updated);
+}
+
+updateAndroidConfig('variables.gradle', [
+  [/compileSdkVersion\s*=\s*\d+/g, 'compileSdkVersion = 36'],
+  [/targetSdkVersion\s*=\s*\d+/g, 'targetSdkVersion = 36'],
+]);
+updateAndroidConfig('build.gradle', [
+  [/com\.android\.tools\.build:gradle:[\d.]+/g, 'com.android.tools.build:gradle:8.10.1'],
+]);
+updateAndroidConfig('gradle/wrapper/gradle-wrapper.properties', [
+  [/^distributionUrl=.+$/gm, 'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11.1-bin.zip'],
+]);
+const wrapperPath = join(androidRoot, 'gradle/wrapper/gradle-wrapper.properties');
+const wrapper = readFileSync(wrapperPath, 'utf8');
+const checksum = 'distributionSha256Sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6';
+writeFileSync(wrapperPath, /^distributionSha256Sum=/m.test(wrapper)
+  ? wrapper.replace(/^distributionSha256Sum=.+$/m, checksum)
+  : `${wrapper.trimEnd()}\n${checksum}\n`);
+console.log('  ✓ API 36, Android Gradle Plugin 8.10.1, Gradle 8.11.1 (checksum pinned)');
 console.log('[prepare-android-assets] done.');
