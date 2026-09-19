@@ -1,4 +1,6 @@
 import type {
+  ReportFilters, ReportStats, ReportAccountability, ReportFilterOptions,
+  ReportTask, ReportTaskFilters, ReportTaskInput, ReportAssignee,
   AcknowledgeScorecardInput,
   Appointment,
   AppNotification,
@@ -790,6 +792,25 @@ export const api = {
       items.push(...page.items);
     } while (items.length < total);
     return { items, total };
+  },
+  managedReports(filters: ReportFilters = {}, limit = 15, offset = 0): Promise<{ items: ResidentReport[]; total: number; stats: ReportStats }> {
+    return request(`/transparency/reports${qs({ ...filters, scope: 'inbox', limit, offset })}`);
+  },
+  reportAccountability(filters: ReportFilters = {}, limit = 15, offset = 0): Promise<{ items: ReportAccountability[]; total: number }> {
+    return request(`/transparency/reports/accountability${qs({ ...filters, limit, offset })}`);
+  },
+  reportFilterOptions(): Promise<ReportFilterOptions> { return request('/transparency/reports/filter-options'); },
+  reportTasks(filters: ReportTaskFilters = {}, limit = 15, offset = 0): Promise<{ items: ReportTask[]; total: number }> {
+    return request(`/transparency/report-tasks${qs({ ...filters, limit, offset })}`);
+  },
+  reportAssignees(reportId: string): Promise<{ items: ReportAssignee[] }> {
+    return request(`/transparency/reports/${reportId}/assignees`);
+  },
+  createReportTask(reportId: string, input: ReportTaskInput): Promise<{ id: string }> {
+    return request(`/transparency/reports/${reportId}/tasks`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  updateReportTask(reportId: string, taskId: string, input: ReportTaskInput): Promise<{ id: string }> {
+    return request(`/transparency/reports/${reportId}/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(input) });
   },
   mediaPolicy(): Promise<MediaPolicy> { return request('/transparency/media-policy'); },
   setMediaPolicy(policy: MediaPolicy): Promise<MediaPolicy> {

@@ -65,17 +65,66 @@ export const updateResidentReportSchema = z
   .object({
     status: z.enum(['submitted', 'acknowledged', 'in_progress', 'resolved', 'closed']).optional(),
     feedback: z.string().trim().min(1).max(4000).nullable().optional(),
-    action: z.enum(['acknowledge', 'contact', 'follow_up', 'resolve', 'confirm', 'request_follow_up', 'close']).optional(),
+    action: z.enum(['acknowledge', 'contact', 'follow_up', 'resolve', 'confirm', 'request_follow_up', 'reopen', 'close']).optional(),
     contactMethod: z.enum(['phone', 'email', 'sms', 'whatsapp', 'in_person', 'service_portal', 'other']).optional(),
     contactTarget: z.string().trim().min(1).max(200).optional(),
     contactMethodDetail: z.string().trim().min(1).max(200).optional(),
     internalNote: z.string().trim().min(1).max(4000).optional(),
     externalReference: z.string().trim().min(1).max(100).optional(),
+    referenceKind: z.enum(['service_provider', 'c3']).optional(),
+    c3Requirement: z.enum(['needs_assessment', 'required', 'not_required']).optional(),
+    c3Reason: z.string().trim().min(1).max(1000).nullable().optional(),
     followUpAt: z.string().datetime({ offset: true }).nullable().optional(),
     expectedVersion: z.number().int().min(0).optional(),
     requestId: z.string().uuid().optional(),
   }).strict()
-  .refine((v) => v.status !== undefined || v.feedback !== undefined || v.action !== undefined || v.externalReference !== undefined || v.internalNote !== undefined, {
+  .refine((v) => v.status !== undefined || v.feedback !== undefined || v.action !== undefined || v.externalReference !== undefined || v.internalNote !== undefined || v.c3Requirement !== undefined || v.referenceKind !== undefined || v.c3Reason !== undefined, {
     message: 'Provide an action, status, reference, or feedback',
   });
 export type UpdateResidentReport = z.infer<typeof updateResidentReportSchema>;
+
+export const reportListQuerySchema = z.object({
+  scope: z.enum(['mine', 'inbox']).default('mine'),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  search: z.string().trim().max(200).optional(),
+  category: z.string().max(40).optional(),
+  status: z.enum(['submitted','acknowledged','in_progress','resolved','closed']).optional(),
+  ward: z.string().max(64).optional(),
+  councillor: z.union([z.string().uuid(), z.literal('unassigned')]).optional(),
+  acknowledged: z.enum(['yes','no','unknown']).optional(),
+  actionTaken: z.enum(['yes','no','councillor']).optional(),
+  c3: z.enum(['needs_assessment','required','not_required','missing','recorded']).optional(),
+  assignee: z.union([z.string().uuid(), z.literal('me'), z.literal('unassigned')]).optional(),
+  overdue: z.enum(['yes','no']).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  sort: z.enum(['received','lastAction','nextDue']).default('received'),
+  direction: z.enum(['asc','desc']).default('desc'),
+}).refine((v) => !v.from || !v.to || Date.parse(v.from) <= Date.parse(v.to), { message: 'Invalid date range' });
+export type ReportListQuery = z.infer<typeof reportListQuerySchema>;
+
+const taskFields = {
+  title: z.string().trim().min(1).max(200),
+  instructions: z.string().trim().max(4000).nullable().optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  dueAt: z.string().datetime({ offset: true }),
+};
+export const createReportTaskSchema = z.object({ ...taskFields, requestId: z.string().uuid() }).strict();
+export const updateReportTaskSchema = z.object({
+  title: taskFields.title.optional(), instructions: taskFields.instructions, assigneeId: taskFields.assigneeId,
+  dueAt: taskFields.dueAt.optional(), status: z.enum(['todo','in_progress','done','cancelled']).optional(),
+  outcome: z.string().trim().min(1).max(4000).optional(),
+  expectedVersion: z.number().int().min(0), requestId: z.string().uuid(),
+}).strict().refine((v) => Object.keys(v).some((key) => !['requestId','expectedVersion'].includes(key)), { message: 'Provide a task change' });
+export type CreateReportTask = z.infer<typeof createReportTaskSchema>;
+export type UpdateReportTask = z.infer<typeof updateReportTaskSchema>;
+export const taskListQuerySchema = z.object({
+  reportId: z.string().uuid().optional(),
+  assignee: z.union([z.string().uuid(), z.literal('me'), z.literal('unassigned')]).optional(),
+  status: z.enum(['todo','in_progress','done','cancelled']).optional(),
+  overdue: z.enum(['yes','no']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(15), offset: z.coerce.number().int().min(0).default(0),
+  sort: z.enum(['due','status']).default('due'), direction: z.enum(['asc','desc']).default('asc'),
+});
+export type TaskListQuery = z.infer<typeof taskListQuerySchema>;

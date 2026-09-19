@@ -7,6 +7,8 @@ import MediaCapture, { useMediaDrafts } from '../supporter/MediaCapture';
 import type { ResidentReport } from '../../types';
 import { useAuth } from '../../lib/auth';
 import ReportWorkflowPanel, { REPORT_LABEL } from '../ReportWorkflowPanel';
+import ReportTasks from '../crm/ReportTasks';
+import ResidentReportDialog from '../crm/ResidentReportDialog';
 
 /** Roles that receive a ward inbox of resident reports (mirrors the backend). */
 const STAFF_ROLES = ['national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'];
@@ -34,8 +36,11 @@ const CATEGORIES = [
 
 export default function ReportToCouncillor() {
   const toast = useToast();
-  const { role } = useAuth();
-  const isStaff = STAFF_ROLES.includes(role ?? '');
+  const { role, permissions } = useAuth();
+  const isStaff = STAFF_ROLES.includes(role ?? '') && permissions.includes('report:read');
+  const [taskReportId, setTaskReportId] = useState<string | null>(null);
+  const [tasksRevision, setTasksRevision] = useState(0);
+  const tasksChanged = useCallback(() => setTasksRevision((n) => n + 1), []);
   const [category, setCategory] = useState(CATEGORIES[0]!);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -227,6 +232,8 @@ export default function ReportToCouncillor() {
 
       {isStaff && (
         <>
+          <div className="card"><ReportTasks refreshKey={tasksRevision} onOpen={setTaskReportId} onChanged={tasksChanged} /></div>
+          {taskReportId && <ResidentReportDialog key={taskReportId} id={taskReportId} onClose={() => setTaskReportId(null)} onChanged={tasksChanged} />}
           <div className="section-label" style={{ marginTop: 16 }}>
             Ward inbox · reports from residents
           </div>
@@ -270,6 +277,7 @@ export default function ReportToCouncillor() {
                               {openReport.accuracyM != null ? ` · ±${Math.round(openReport.accuracyM)}m` : ''}
                             </p>
                           )}
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTaskReportId(r.id)}>Manage report and tasks</button>
                           <ReportWorkflowPanel key={r.id} report={openReport} onUpdated={applyUpdate} />
                         </>
                       ) : (

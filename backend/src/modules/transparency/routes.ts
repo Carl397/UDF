@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { z } from 'zod';
+import { listReportTasks, reportAssignees, saveReportTask } from './reportTasks.js';
+import { reportAccountability, reportFilterOptions } from './reportManagement.js';
 import { requirePermission } from '../../middleware/authorize.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { Permission } from '../../auth/permissions.js';
@@ -6,6 +9,7 @@ import { principalSeesWard } from '../../auth/scope.js';
 import { recordAudit } from '../../security/audit.js';
 import {
   createResidentReportSchema,
+  reportListQuerySchema, taskListQuerySchema, createReportTaskSchema, updateReportTaskSchema,
   createTransparencyRatingSchema,
   updateResidentReportSchema,
   uploadMediaSchema,
@@ -176,14 +180,30 @@ transparencyRouter.get(
   },
   async (req, res, next) => {
     try {
-      const scope = req.query.scope === 'inbox' ? 'inbox' : 'mine';
-      const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
-      const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
-      const out = await svc.listResidentReports(req.principal!, { scope, limit, offset });
+      const out = await svc.listResidentReports(req.principal!, reportListQuerySchema.parse(req.query));
       res.json(out);
     } catch (err) { next(err); }
   },
 );
+
+transparencyRouter.get('/reports/accountability', authenticate, requirePermission(Permission.REPORT_READ), async (req, res, next) => {
+  try { res.json(await reportAccountability(req.principal!, reportListQuerySchema.parse(req.query))); } catch (err) { next(err); }
+});
+transparencyRouter.get('/reports/filter-options', authenticate, requirePermission(Permission.REPORT_READ), async (req, res, next) => {
+  try { res.json(await reportFilterOptions(req.principal!)); } catch (err) { next(err); }
+});
+transparencyRouter.get('/report-tasks', authenticate, requirePermission(Permission.REPORT_READ), async (req, res, next) => {
+  try { res.json(await listReportTasks(req.principal!, taskListQuerySchema.parse(req.query))); } catch (err) { next(err); }
+});
+transparencyRouter.get('/reports/:id/assignees', authenticate, requirePermission(Permission.REPORT_WRITE), async (req, res, next) => {
+  try { res.json(await reportAssignees(z.string().uuid().parse(req.params.id), req.principal!)); } catch (err) { next(err); }
+});
+transparencyRouter.post('/reports/:id/tasks', authenticate, requirePermission(Permission.REPORT_WRITE), async (req, res, next) => {
+  try { res.status(201).json(await saveReportTask(z.string().uuid().parse(req.params.id), null, createReportTaskSchema.parse(req.body), req.principal!)); } catch (err) { next(err); }
+});
+transparencyRouter.patch('/reports/:id/tasks/:taskId', authenticate, requirePermission(Permission.REPORT_WRITE), async (req, res, next) => {
+  try { res.json(await saveReportTask(z.string().uuid().parse(req.params.id), z.string().uuid().parse(req.params.taskId), updateReportTaskSchema.parse(req.body), req.principal!)); } catch (err) { next(err); }
+});
 
 /** One report (owner or ward staff). */
 transparencyRouter.get('/reports/:id', authenticate, async (req, res, next) => {

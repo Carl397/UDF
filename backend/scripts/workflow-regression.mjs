@@ -10,6 +10,9 @@ import { pool } from '../src/db/pool.ts';
 import { Permission, Role, permissionsForRole, modulesForRole } from '../src/auth/permissions.ts';
 import * as reports from '../src/modules/transparency/service.ts';
 import { applyReportAction, reportWorkflowView } from '../src/modules/transparency/reportWorkflow.ts';
+import { reportAccountability, listManagedReports, reportFilterOptions } from '../src/modules/transparency/reportManagement.ts';
+import { listReportTasks, reportAssignees, saveReportTask } from '../src/modules/transparency/reportTasks.ts';
+import { reportListQuerySchema, createReportTaskSchema, updateReportTaskSchema } from '../src/modules/transparency/schemas.ts';
 import { parseCapturedMedia, validateMediaBatch, setMediaPolicy } from '../src/modules/transparency/mediaPolicy.ts';
 import { getDashboardActivity } from '../src/modules/crm/activityStats.ts';
 import { updateUser } from '../src/modules/crm/userService.ts';
@@ -70,6 +73,7 @@ const councilor = p(Role.WARD_COUNCILLOR);
 const peer = p(Role.WARD_COUNCILLOR);
 const outside = p(Role.WARD_COUNCILLOR, outsideWard);
 const admin = p(Role.NATIONAL_ADMIN, null);
+const coordinator = p(Role.LOCAL_COORDINATOR);
 const memberId = randomUUID();
 const actor = { actorId: admin.sub, actorRole: admin.role, permissions: admin.permissions };
 let report;
@@ -80,7 +84,7 @@ try {
   await client.query('BEGIN');
   await client.query("INSERT INTO regions(code,name,level) VALUES ($1,'Regression subcouncil','subcouncil')", [region]);
   await client.query("INSERT INTO regions(code,name,level,parent_code) VALUES ($1,'Ward QA1','ward',$3),($2,'Ward QA2','ward',$3)", [ward, outsideWard, region]);
-  for (const principal of [member, councilor, peer, outside, admin]) {
+  for (const principal of [member, councilor, peer, outside, admin, coordinator]) {
     const sealed = await sealRecord(principal.sub, { email: `${principal.sub}@example.invalid`, fullName: 'Regression Councilor' });
     await client.query('INSERT INTO users(id,password_hash,role,ward_code,region_codes,sealed_pii) VALUES ($1,$2,$3,$4,$5,$6)',
       [principal.sub, 'not-a-login-hash', principal.role, principal.wardCode, principal.regionCodes, JSON.stringify(sealed)]);
@@ -275,6 +279,171 @@ try {
     await rejects(() => reports.loadMediaForPrincipal(mediaId, { ...member, permissions: [] }), 403);
     await rejects(() => reports.loadMediaForPrincipal(mediaId, { ...councilor, permissions: [] }), 403);
   });
+  const managementTag = `Management-${suffix}`;
+  let managedId;
+  let taskId;
+  const future = () => new Date(Date.now() + 86400000).toISOString();
+  const taskCreate = (overrides = {}) => createReportTaskSchema.parse({ title: 'Inspect reported issue', dueAt: future(), requestId: randomUUID(), ...overrides });
+  const taskUpdate = (overrides = {}) => updateReportTaskSchema.parse({ expectedVersion: 0, requestId: randomUUID(), ...overrides });
+  await test('management pagination handles 0, 15, 16, and 31 rows with full-result counts', async () => {
+    const filter = { search: managementTag, limit: 15 };
+    assert.equal((await listManagedReports(councilor, filter)).total, 0);
+    for (const [additional, total] of [[15,15],[1,16],[15,31]]) {
+      await client.query(`INSERT INTO resident_reports(ref_no,user_id,ward_code,category,message,councillor_user_id)
+        SELECT $1 || '-' || gen_random_uuid(),$2,$3,'Other',$1,$4 FROM generate_series(1,$5)`, [managementTag, member.sub, ward, councilor.sub, additional]);
+      const first = await listManagedReports(councilor, filter);
+      assert.equal(first.items.length, 15); assert.equal(first.total, total); assert.equal(first.stats.noAction, total);
+      const rest = await listManagedReports(councilor, { ...filter, offset: 15 });
+      assert.equal(rest.items.length, Math.min(15,total - 15));
+      assert.ok(rest.items.every((r) => !first.items.some((a) => a.id === r.id)));
+      assert.deepEqual((await listManagedReports(councilor, filter)).items.map((r) => r.id), first.items.map((r) => r.id));
+      managedId = first.items[0].id;
+    }
+    const empty = await listManagedReports(councilor, { ...filter, offset: 999 });
+    assert.equal(empty.total,31); assert.equal(empty.items.length,0); assert.equal(empty.stats.open,31);
+    assert.equal((await listManagedReports(outside, filter)).total,0);
+  });
+  await test('management validation rejects invalid filters and sorts', async () => {
+    for (const query of [{ limit: 0 },{ offset: -1 },{ sort: 'created_at; DROP' },{ councillor: 'invalid' },{ from: future(), to: '2020-01-01T00:00:00Z' }]) {
+      assert.equal(reportListQuerySchema.safeParse(query).success, false);
+    }
+    await rejects(() => listManagedReports(member),403);
+    await rejects(() => listManagedReports({ ...councilor, permissions: [] }),403);
+  });
+  await test('C3 assessment separates legacy references from C3 and records no plaintext number', async () => {
+    const action = (input, p = councilor) => applyReportAction(managedId, updateResidentReportSchema.parse(input), p, ctx);
+    await action({ externalReference: 'GENERIC-1234' });
+    assert.equal((await reports.getResidentReport(managedId, councilor)).c3Requirement,'needs_assessment');
+    await action({ c3Requirement: 'required' });
+    assert.equal((await listManagedReports(councilor, { search: managementTag, c3: 'missing' })).total,1);
+    await rejects(() => action({ c3Requirement: 'not_required' }),400);
+    await rejects(() => action({ referenceKind: 'c3' },peer),403);
+    await action({ referenceKind: 'c3', externalReference: 'C3-PRIVATE-7654321' });
+    const view = await reports.getResidentReport(managedId,councilor);
+    assert.equal(view.hasC3,true); assert.equal(view.referenceKind,'c3');
+    const events = (await client.query('SELECT * FROM resident_report_events WHERE report_id=$1',[managedId])).rows;
+    assert.ok(!JSON.stringify(events).includes('C3-PRIVATE-7654321'));
+    const list = await listManagedReports(councilor, { search: managementTag, c3: 'recorded' });
+    assert.equal(list.total,1); assert.ok(!JSON.stringify(list).includes('C3-PRIVATE-7654321'));
+    await action({ c3Requirement: 'not_required', c3Reason: 'Community information only' });
+    assert.equal((await listManagedReports(councilor,{ search:managementTag,c3:'not_required' })).total,1);
+    await rejects(() => action({ action:'request_follow_up', feedback:'Check again', c3Requirement:'required' },member),400);
+  });
+  await test('acknowledgment is distinct from action and metadata edits', async () => {
+    await applyReportAction(managedId,{ action:'acknowledge', requestId:randomUUID() },admin,ctx);
+    const r = await reports.getResidentReport(managedId,councilor);
+    assert.equal(r.acknowledgment,'yes'); assert.equal(r.acknowledgedBy,admin.sub);
+    assert.equal(r.councillorAcknowledged,false); assert.equal(r.lastActionAt,null);
+    const filtered = await listManagedReports(councilor, { search:managementTag,ward,category:'Other',acknowledged:'yes',actionTaken:'no' });
+    assert.equal(filtered.total,1);
+    await client.query("UPDATE resident_reports SET status='closed' WHERE message=$1 AND id<>$2",[managementTag,managedId]);
+    assert.equal((await listManagedReports(councilor,{ search:managementTag,acknowledged:'unknown' })).total,30);
+  });
+  await test('detail preserves acknowledgment evidence and inactive assignment metadata', async () => {
+    await client.query('UPDATE resident_reports SET acknowledged_at=NULL WHERE id=$1',[managedId]);
+    const detail = await reports.getResidentReport(managedId,admin);
+    assert.ok(detail.acknowledgedAt); assert.equal(detail.acknowledgment,'yes');
+    await client.query("UPDATE users SET moderation_status='suspended' WHERE id=$1",[councilor.sub]);
+    const inactive = await reports.getResidentReport(managedId,admin);
+    assert.equal(inactive.assigned,false); assert.equal(inactive.assignmentState,'inactive');
+    await client.query("UPDATE users SET moderation_status='active' WHERE id=$1",[councilor.sub]);
+  });
+  await test('C3 reasons can be cleared except when assessment requires one', async () => {
+    await rejects(() => applyReportAction(managedId,{c3Reason:null},councilor,ctx),400);
+    await applyReportAction(managedId,{c3Requirement:'required',c3Reason:null},councilor,ctx);
+    assert.equal((await reports.getResidentReport(managedId,councilor)).c3Reason,null);
+    await applyReportAction(managedId,{c3Requirement:'not_required',c3Reason:'Community information only'},councilor,ctx);
+  });
+  await test('tasks enforce actor-bound creation retries and parent authorization', async () => {
+    const input = taskCreate({ instructions:'Staff-only inspection instructions', assigneeId:councilor.sub });
+    const task = await saveReportTask(managedId,null,input,councilor); taskId=task.id;
+    assert.equal((await saveReportTask(managedId,null,input,councilor)).id,taskId);
+    await rejects(() => saveReportTask(managedId,null,input,admin),409);
+    await rejects(() => saveReportTask(managedId,null,taskCreate(),member),403);
+    await rejects(() => saveReportTask(managedId,null,taskCreate(),outside),403);
+    assert.equal((await listReportTasks(councilor,{reportId:managedId})).total,1);
+    assert.equal((await listReportTasks(outside)).total,0);
+    await rejects(() => listReportTasks(member),403);
+    await rejects(() => listReportTasks(outside,{reportId:managedId}),403);
+    await rejects(() => saveReportTask(report.id,taskId,taskUpdate({title:'Wrong parent'}),councilor),404);
+  });
+  await test('assignees exclude out-of-ward, revoked, disabled, and inactive staff', async () => {
+    let people = (await reportAssignees(managedId,councilor)).items;
+    assert.ok(people.some((p)=>p.id===councilor.sub)); assert.ok(!people.some((p)=>p.id===outside.sub || p.id===member.sub));
+    assert.ok(people.every((p)=>!('email' in p) && !('sealed_pii' in p)));
+    await rejects(() => saveReportTask(managedId,null,taskCreate({assigneeId:outside.sub}),councilor),400);
+    await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1',[peer.sub,[Permission.REPORT_WRITE]]);
+    await rejects(() => saveReportTask(managedId,null,taskCreate({assigneeId:peer.sub}),councilor),400);
+    await client.query('UPDATE users SET permission_revokes=$2,is_active=false WHERE id=$1',[peer.sub,[]]);
+    await rejects(() => saveReportTask(managedId,null,taskCreate({assigneeId:peer.sub}),councilor),400);
+    await client.query('UPDATE users SET is_active=true WHERE id=$1',[peer.sub]);
+    await client.query("UPDATE role_module_gates SET enabled=false WHERE role='ward_councillor' AND module_key='reports'");
+    await rejects(() => saveReportTask(managedId,null,taskCreate({assigneeId:peer.sub}),admin),400);
+    await client.query("UPDATE role_module_gates SET enabled=true WHERE role='ward_councillor' AND module_key='reports'");
+  });
+  await test('tasks reject stale edits, require outcomes, and never auto-transition reports', async () => {
+    const input=taskUpdate({status:'in_progress'});
+    await saveReportTask(managedId,taskId,input,councilor); await saveReportTask(managedId,taskId,input,councilor);
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({title:'Stale'}),councilor),409);
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({status:'done',expectedVersion:1}),councilor),400);
+    await saveReportTask(managedId,taskId,taskUpdate({status:'done',expectedVersion:1,outcome:'Inspection completed; staff-only result'}),councilor);
+    const view = await reports.getResidentReport(managedId,councilor);
+    assert.equal(view.status,'acknowledged'); assert.ok(view.lastActionAt); assert.ok(view.councillorActionAt);
+    const memberView=await reports.getResidentReport(managedId,member);
+    assert.ok(!JSON.stringify(memberView).includes('staff-only result'));
+    assert.ok(!JSON.stringify(memberView).includes('Staff-only inspection instructions'));
+    assert.ok(memberView.events.every((e)=>!e.actorName && !e.actorId));
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({status:'todo',dueAt:'2020-01-01T00:00:00Z',expectedVersion:2}),councilor),400);
+    await saveReportTask(managedId,taskId,taskUpdate({status:'todo',dueAt:future(),expectedVersion:2}),councilor);
+    assert.equal((await listReportTasks(councilor,{reportId:managedId})).items[0].completedAt,null);
+  });
+  await test('inactive task assignee is flagged and must be reassigned before update', async () => {
+    await client.query('UPDATE users SET is_active=false WHERE id=$1',[councilor.sub]);
+    assert.equal((await listReportTasks(admin,{reportId:managedId})).items[0].assigneeEligible,false);
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({title:'Still assigned',expectedVersion:3}),admin),400);
+    await saveReportTask(managedId,taskId,taskUpdate({assigneeId:admin.sub,expectedVersion:3}),admin);
+    await client.query('UPDATE users SET is_active=true WHERE id=$1',[councilor.sub]);
+  });
+  await test('overdue tasks, assignee filters, and accountability span pages', async () => {
+    await client.query("UPDATE resident_report_tasks SET due_at=now()-interval '1 day' WHERE id=$1",[taskId]);
+    const f={search:managementTag,overdue:'yes',assignee:admin.sub};
+    const list=await listManagedReports(councilor,f);
+    assert.equal(list.total,1); assert.equal(list.stats.overdue,1);
+    assert.equal((await reportAccountability(councilor,f)).items[0].overdue,1);
+    assert.equal((await reportAccountability(outside,f)).total,0);
+    const empty=await reportAccountability(councilor,{...f,offset:999}); assert.equal(empty.total,1); assert.equal(empty.items.length,0);
+    const options=await reportFilterOptions(councilor);
+    assert.ok(options.taskAssignees.some((p)=>p.id===admin.sub));
+    assert.equal((await listReportTasks(admin,{reportId:managedId,assignee:'me',overdue:'yes'})).total,1);
+  });
+  await test('closed reports retain tasks but reject creation; cancelling requires a reason', async () => {
+    await applyReportAction(managedId,{action:'close',feedback:'Administrative closure'},councilor,ctx);
+    await rejects(() => saveReportTask(managedId,null,taskCreate(),councilor),409);
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({status:'cancelled',expectedVersion:4}),admin),400);
+    await saveReportTask(managedId,taskId,taskUpdate({status:'cancelled',expectedVersion:4,outcome:'No further inspection required'}),admin);
+    assert.equal((await listReportTasks(councilor,{reportId:managedId})).total,1);
+    assert.equal((await listManagedReports(councilor,{search:managementTag,overdue:'yes'})).total,0);
+  });
+  await test('live ward moves revoke old report-task access even with stale principal claims', async () => {
+    await client.query('UPDATE users SET ward_code=$2 WHERE id=$1',[peer.sub,outsideWard]);
+    await rejects(() => reportAssignees(managedId,peer),403);
+    await rejects(() => saveReportTask(managedId,taskId,taskUpdate({title:'Wrong ward',expectedVersion:5}),peer),403);
+    await client.query('UPDATE users SET ward_code=$2 WHERE id=$1',[peer.sub,ward]);
+  });
+  await test('staff reopen closed reports with a reason before adding tasks', async () => {
+    await rejects(() => applyReportAction(managedId,{action:'reopen'},councilor,ctx),400);
+    await rejects(() => applyReportAction(managedId,{action:'reopen',feedback:'New work'},member,ctx),403);
+    await applyReportAction(managedId,{action:'reopen',feedback:'Further inspection needed'},councilor,ctx);
+    const reopened = await reports.getResidentReport(managedId,councilor);
+    assert.equal(reopened.status,'in_progress'); assert.equal(reopened.resolvedAt,null); assert.equal(reopened.confirmedAt,null);
+    await saveReportTask(managedId,null,taskCreate({assigneeId:coordinator.sub}),councilor);
+    assert.equal((await listReportTasks(coordinator,{reportId:managedId,assignee:'me'})).total,1);
+  });
+  await test('newly in-scope staff can open details with stale ward claims', async () => {
+    await client.query('UPDATE users SET ward_code=$2 WHERE id=$1',[outside.sub,ward]);
+    assert.equal((await reports.getResidentReport(managedId,outside)).id,managedId);
+    await client.query('UPDATE users SET ward_code=$2 WHERE id=$1',[outside.sub,outsideWard]);
+  });
   const app = createApp();
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -288,6 +457,15 @@ try {
       await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1', [councilor.sub, [Permission.PATROL_READ]]);
       assert.equal((await fetch(`${base}/api/patrols/stats`, { headers: { Authorization: `Bearer ${signAccessToken(councilor)}` } })).status, 403);
       await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1', [councilor.sub, []]);
+    });
+    await test('report management HTTP endpoints enforce permissions and query validation', async () => {
+      assert.equal((await fetch(`${base}/api/transparency/report-tasks`)).status,401);
+      const headers={Authorization:`Bearer ${signAccessToken(councilor)}`};
+      const response=await fetch(`${base}/api/transparency/reports?scope=inbox&limit=15&search=${managementTag}`,{headers});
+      assert.equal(response.status,200); assert.equal((await response.json()).items.length,15);
+      assert.equal((await fetch(`${base}/api/transparency/reports?scope=inbox&sort=invalid`,{headers})).status,400);
+      assert.equal((await fetch(`${base}/api/transparency/report-tasks`,{headers:{Authorization:`Bearer ${signAccessToken(member)}`}})).status,403);
+      assert.equal((await fetch(`${base}/api/transparency/reports/${managedId}/assignees`,{headers:{Authorization:`Bearer ${signAccessToken(outside)}`}})).status,403);
     });
     await test('media policy supports cross-origin PUT preflight', async () => {
       const response = await fetch(`${base}/api/transparency/media-policy`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'PUT' } });
@@ -304,13 +482,15 @@ try {
       void previous.then(next);
     });
     harness.get('/api/qa-session', (req, res) => {
-      const principal = req.query.role === 'member' ? member : req.query.role === 'councilor' ? councilor : admin;
-      res.json({ accessToken: signAccessToken(principal), permissions: principal.permissions, enabledModules: modulesForRole(principal.role), ward, reportId: report.id });
+      const principal = req.query.role === 'member' ? member : req.query.role === 'councilor' ? councilor : req.query.role === 'coordinator' ? coordinator : admin;
+      res.json({ accessToken: signAccessToken(principal), permissions: principal.permissions, enabledModules: modulesForRole(principal.role), ward, reportId: report.id, reportRef: report.refNo, managementTag });
     });
     harness.use(app);
-    const browserServer = harness.listen(4000, '127.0.0.1');
-    await new Promise((resolve) => browserServer.once('listening', resolve));
-    console.log('Rollback-only browser API ready on http://127.0.0.1:4000; fixtures expire in 15 minutes.');
+    const port = Number(process.env.WORKFLOW_BROWSER_PORT ?? 4000);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid local browser port');
+    const browserServer = harness.listen(port, '127.0.0.1');
+    await new Promise((resolve, reject) => { browserServer.once('listening', resolve); browserServer.once('error', reject); });
+    console.log(`Rollback-only browser API ready on http://127.0.0.1:${port}; fixtures expire in 15 minutes.`);
     await new Promise((resolve) => {
       const timer = setTimeout(resolve, 15 * 60 * 1000);
       process.once('SIGTERM', () => { clearTimeout(timer); resolve(); });

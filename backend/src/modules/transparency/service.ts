@@ -4,6 +4,9 @@ import { join, resolve } from 'node:path';
 import { query, withTransaction } from '../../db/pool.js';
 import type { PoolClient } from 'pg';
 import { applyReportAction, reportWorkflowView } from './reportWorkflow.js';
+import { listManagedReports } from './reportManagement.js';
+import { liveReportStaff } from './reportAccess.js';
+import type { ReportListQuery } from './schemas.js';
 import { getMediaPolicy, parseCapturedMedia, validateMediaBatch } from './mediaPolicy.js';
 import { ApiError } from '../../http/errors.js';
 import { env } from '../../config/env.js';
@@ -654,14 +657,14 @@ export async function createResidentReport(
  */
 export async function listResidentReports(
   principal: Principal,
-  opts: { scope?: 'mine' | 'inbox'; limit?: number; offset?: number } = {},
-): Promise<{ items: ResidentReportView[]; total: number }> {
+  opts: Partial<ReportListQuery> = {},
+): Promise<{ items: ResidentReportView[]; total: number; stats?: unknown }> {
+  if (opts.scope === 'inbox') return listManagedReports(principal, opts);
   if ((opts.limit != null && (!Number.isInteger(opts.limit) || opts.limit < 1)) ||
       (opts.offset != null && (!Number.isInteger(opts.offset) || opts.offset < 0))) throw ApiError.badRequest('Invalid pagination');
   const limit = Math.min(opts.limit ?? 50, 200);
   const offset = opts.offset ?? 0;
-  const staff = STAFF_ROLES.includes(principal.role);
-  const inbox = opts.scope === 'inbox' && staff;
+  const inbox = false;
 
   const params: unknown[] = [];
   let where: string;
@@ -725,6 +728,7 @@ export async function getResidentReport(
   id: string,
   principal: Principal,
 ): Promise<ResidentReportView | null> {
+  if (STAFF_ROLES.includes(principal.role) && principal.permissions?.includes(Permission.REPORT_READ)) principal = await liveReportStaff(principal);
   const res = await query<{
     id: string; ref_no: string; category: string; message: string; ward_code: string | null;
     status: string; created_at: string; user_id: string; lat: number | null; lng: number | null;

@@ -940,7 +940,7 @@ export interface ResidentReportMedia {
 }
 
 export interface ReportActionInput {
-  action?: 'acknowledge' | 'contact' | 'follow_up' | 'resolve' | 'confirm' | 'request_follow_up' | 'close';
+  action?: 'acknowledge' | 'contact' | 'follow_up' | 'resolve' | 'confirm' | 'request_follow_up' | 'reopen' | 'close';
   status?: string;
   feedback?: string | null;
   contactMethod?: 'phone' | 'email' | 'sms' | 'whatsapp' | 'in_person' | 'service_portal' | 'other';
@@ -948,11 +948,16 @@ export interface ReportActionInput {
   contactMethodDetail?: string;
   internalNote?: string;
   externalReference?: string;
+  referenceKind?: 'service_provider' | 'c3';
+  c3Requirement?: 'needs_assessment' | 'required' | 'not_required';
+  c3Reason?: string | null;
   followUpAt?: string | null;
   expectedVersion?: number;
   requestId?: string;
 }
 export interface ReportEvent {
+  actorName?: string;
+  metadata?: { c3Requirement?: string; c3Reason?: string | null; referenceKind?: string };
   id: string; action: string; actorRole: string | null; note: string | null;
   contactMethod: string | null; fromStatus: string | null; toStatus: string | null;
   followUpAt: string | null; createdAt: string;
@@ -978,6 +983,22 @@ export interface DashboardActivity {
 
 /** A resident report to the ward councillor (private to author + ward staff). */
 export interface ResidentReport {
+  wardName?: string | null;
+  councillorId?: string | null;
+  councillorName?: string | null;
+  assignmentState?: 'active' | 'inactive' | 'moved' | 'missing' | 'unassigned';
+  acknowledgment?: 'yes' | 'no' | 'unknown';
+  acknowledgedBy?: string | null;
+  acknowledgedByName?: string | null;
+  councillorAcknowledged?: boolean;
+  lastActionAt?: string | null;
+  councillorActionAt?: string | null;
+  openTasks?: number;
+  nextDueAt?: string | null;
+  c3Requirement?: 'needs_assessment' | 'required' | 'not_required';
+  c3Reason?: string | null;
+  referenceKind?: 'service_provider' | 'c3';
+  hasC3?: boolean;
   id: string;
   refNo: string;
   category: string;
@@ -1004,6 +1025,40 @@ export interface ResidentReport {
   accuracyM: number | null;
   media: ResidentReportMedia[];
   createdAt: string;
+}
+
+export interface ReportFilters {
+  search?: string; category?: string; status?: string; ward?: string; councillor?: string;
+  acknowledged?: string; actionTaken?: string; c3?: string; assignee?: string; overdue?: string;
+  from?: string; to?: string; sort?: string; direction?: string;
+}
+export interface ReportStats {
+  total: number; open: number; unacknowledged: number; unknownAcknowledgment: number;
+  noAction: number; missingC3: number; overdue: number;
+}
+export interface ReportAccountability extends ReportStats {
+  wardCode: string | null; wardName: string | null; councillorId: string | null; councillorName: string | null;
+  assignmentState: string; councillorAcknowledged: number; councillorActions: number;
+}
+export interface ReportFilterOptions {
+  taskAssignees?: { id: string; name: string }[];
+  categories: string[]; wards: { code: string; name: string }[]; councillors: { id: string; name: string }[];
+}
+export interface ReportAssignee { id: string; name: string; role: string; isMe: boolean }
+export interface ReportTask {
+  id: string; reportId: string; refNo: string; wardCode: string | null; wardName: string | null;
+  title: string; instructions: string | null; assigneeId: string | null; assigneeName: string | null;
+  assigneeEligible: boolean; isMine: boolean; canManage: boolean; dueAt: string;
+  status: 'todo' | 'in_progress' | 'done' | 'cancelled'; outcome: string | null;
+  version: number; createdAt: string; completedAt: string | null;
+  events: { id: string; action: string; actorName: string; outcome: string | null; createdAt: string }[];
+}
+export interface ReportTaskInput {
+  title?: string; instructions?: string | null; assigneeId?: string | null; dueAt?: string;
+  status?: ReportTask['status']; outcome?: string; expectedVersion?: number; requestId: string;
+}
+export interface ReportTaskFilters {
+  reportId?: string; assignee?: string; status?: string; overdue?: string; sort?: string; direction?: string;
 }
 
 export interface CreateResidentReportInput {

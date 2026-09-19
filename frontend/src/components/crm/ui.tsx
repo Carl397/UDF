@@ -445,7 +445,7 @@ export function CrmButton({ children, onClick, variant = 'primary', disabled, ty
 
 export function CrmSmallButton({ children, onClick, danger, disabled }: { children: ReactNode; onClick?: () => void; danger?: boolean; disabled?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} className={`crm-sm-btn ${danger ? 'danger' : ''}`}>
+    <button type="button" onClick={onClick} disabled={disabled} className={`crm-sm-btn ${danger ? 'danger' : ''}`}>
       {children}
       <style jsx>{`
         .crm-sm-btn {
