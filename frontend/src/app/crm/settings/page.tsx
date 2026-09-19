@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../lib/auth';
 import { api } from '../../../lib/api';
+import { permissionLabel } from '../../../lib/caps';
 import {
   CrmPageHeader, CrmCard, CrmBadge, CrmButton, CrmTable,
 } from '../../../components/crm/ui';
@@ -160,7 +161,7 @@ export default function CrmSettings() {
               return [
                 <CrmBadge key="r" value={r} />,
                 <span key="p" style={{ fontSize: 12, color: '#374151' }}>
-                  {list.length ? list.join(', ') : '—'}
+                  {list.length ? list.map(permissionLabel).join('; ') : '—'}
                 </span>,
                 <strong key="c">{list.length}</strong>,
               ];

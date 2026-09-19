@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, API_BASE, tokenStore } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth';
-import { Perm } from '../../../lib/caps';
+import { Perm, permissionLabel } from '../../../lib/caps';
 import { AVATAR_UPLOAD_MAX, IMPORT_MAX, formatBytes } from '../../../lib/uploadLimits';
 import {
   CrmPageHeader, CrmCard, CrmTable, CrmBadge, CrmFilters, CrmPagination,
@@ -58,22 +58,6 @@ const PERMISSION_GROUPS: { area: string; perms: string[] }[] = [
     perms: [Perm.OVERVIEW_READ, Perm.GEO_READ, Perm.AUDIT_READ, Perm.REPORT_GENERATE, Perm.ROLE_MANAGE, Perm.MODERATE_USERS],
   },
 ];
-
-/** Readable names for the permissions whose raw string reads like a schema. */
-const PERM_LABELS: Record<string, string> = {
-  [Perm.PII_DECRYPT]: 'Decrypt sealed PII',
-  [Perm.POST_MODERATE]: 'Take down posts',
-  [Perm.APPOINT_WRITE]: 'Appoint to positions',
-  [Perm.VERIFY_WRITE]: 'Verify party ID cards',
-  [Perm.JOBS_INTEREST_WRITE]: 'Register job interest',
-  [Perm.JOBS_DEMAND_READ]: 'Read ward work-demand',
-  [Perm.JOBS_OPPORTUNITY_WRITE]: 'Post opportunities',
-  [Perm.JOBS_ADMIN]: 'Jobs administration',
-  [Perm.MODERATE_USERS]: 'Ban / suspend ladder',
-};
-
-const permLabel = (p: string) =>
-  PERM_LABELS[p] ?? (p.split(':')[1] ?? p).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 interface UserShape {
   id: string;
@@ -236,7 +220,7 @@ export default function CrmUsers() {
             <div key={role} style={{ border: '1px solid #e5e5e5', borderRadius: 8, padding: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{labelize(role)}</div>
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#64748b' }}>
-                {(rolePerms[role] ?? []).map((p) => (<li key={p}>{p}</li>))}
+                {(rolePerms[role] ?? []).map((p) => (<li key={p} title={p}>{permissionLabel(p)}</li>))}
               </ul>
             </div>
           ))}
@@ -557,10 +541,10 @@ function PermissionsEditor({ role, base, grants, revokes, held, onChange }: {
                   key={p}
                   title={
                     locked
-                      ? `You do not hold ${p}, so you cannot change it for someone else`
+                      ? `You do not hold “${permissionLabel(p)}” (${p}), so you cannot change it for someone else`
                       : fromRole
-                        ? 'Included by the role'
-                        : p
+                        ? `${permissionLabel(p)} (${p}) — included by the role`
+                        : `${permissionLabel(p)} (${p})`
                   }
                   style={{
                     display: 'flex', alignItems: 'center', gap: 7, padding: '2px 0',
@@ -576,7 +560,7 @@ function PermissionsEditor({ role, base, grants, revokes, held, onChange }: {
                     onChange={() => toggle(p)}
                     style={{ width: 14, height: 14, flex: 'none' }}
                   />
-                  <span style={{ minWidth: 0 }}>{permLabel(p)}</span>
+                  <span style={{ minWidth: 0 }}>{permissionLabel(p)}</span>
                   {fromRole && (
                     <span style={{ marginLeft: 'auto', fontSize: 9.5, fontWeight: 800, color: '#8a817b', border: '1px solid #ece5e1', borderRadius: 4, padding: '0 3px' }}>
                       role
@@ -755,7 +739,7 @@ function OverrideBadge({ grants, revokes }: { grants: string[]; revokes: string[
   return (
     <span
       style={{ fontSize: 12, whiteSpace: 'nowrap' }}
-      title={`Added: ${grants.join(', ') || '—'}\nRemoved: ${revokes.join(', ') || '—'}`}
+      title={`Added: ${grants.map(permissionLabel).join(', ') || '—'}\nRemoved: ${revokes.map(permissionLabel).join(', ') || '—'}`}
     >
       {grants.length > 0 && <span style={{ color: '#16a34a', fontWeight: 700 }}>+{grants.length}</span>}
       {grants.length > 0 && revokes.length > 0 && <span style={{ color: '#8a817b' }}> / </span>}

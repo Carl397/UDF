@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { api, tokenStore } from '../src/lib/api.ts';
 import { reportExportRows, safeReportCsvCell, c3Label } from '../src/lib/reportManagement.ts';
+import { Perm, permissionLabel } from '../src/lib/caps.ts';
 
 // Network-free tests of authenticated attachment loading and session rotation.
 const originalFetch = globalThis.fetch;
@@ -22,6 +23,25 @@ async function test(name, run) {
   console.log(`PASS ${name}`);
 }
 try {
+  await test('every permission has a distinct action-and-subject label', async () => {
+    const labels = Object.values(Perm).map((permission) => {
+      const label = permissionLabel(permission);
+      assert.notEqual(label, permission, `${permission} needs a readable label`);
+      assert.ok(label.trim().split(/\s+/).length >= 3, `${permission} must name its action and subject`);
+      assert.doesNotMatch(label, /:/, `${permission} must not render a raw permission identifier`);
+      return label;
+    });
+    assert.equal(new Set(labels).size, labels.length);
+    assert.equal(permissionLabel(Perm.MEMBER_READ), 'View member records');
+    assert.equal(permissionLabel(Perm.BULLETIN_WRITE), 'Publish ward bulletins');
+    assert.equal(permissionLabel(Perm.VERIFY_WRITE), 'Verify service-delivery repairs');
+    assert.equal(permissionLabel(Perm.AUDIT_READ), 'View audit logs');
+  });
+  await test('unknown permission labels preserve their full identifiers', async () => {
+    for (const permission of ['future_feature:read', 'future_feature:write', 'toString', '__proto__', '']) {
+      assert.equal(permissionLabel(permission), permission);
+    }
+  });
   await test('attachment retries once after refreshing an expired session', async () => {
     const calls = [];
     globalThis.fetch = async (url, init) => {

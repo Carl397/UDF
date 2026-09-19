@@ -115,6 +115,61 @@ export const Perm = {
 
 export type PermName = (typeof Perm)[keyof typeof Perm];
 
+/** Every permission label names its action and subject, even outside a group. */
+const PERMISSION_LABELS: Record<PermName, string> = {
+  [Perm.MEMBER_READ]: 'View member records',
+  [Perm.MEMBER_WRITE]: 'Create and edit member records',
+  [Perm.MEMBER_DELETE]: 'Delete member records',
+  [Perm.PII_DECRYPT]: 'Decrypt member personal details',
+  [Perm.MEMBER_EXPORT]: 'Export member records',
+  [Perm.CONSENT_MANAGE]: 'Manage member consent',
+  [Perm.CASE_READ]: 'View service-delivery cases',
+  [Perm.CASE_LOG]: 'Log service-delivery cases',
+  [Perm.CASE_UPDATE]: 'Update service-delivery cases',
+  [Perm.CASE_CLOSE]: 'Close service-delivery cases',
+  [Perm.CASE_ESCALATE]: 'Escalate service-delivery cases',
+  [Perm.ENGAGEMENT_WRITE]: 'View public participation and record projects',
+  [Perm.BULLETIN_READ]: 'View ward bulletins',
+  [Perm.BULLETIN_WRITE]: 'Publish ward bulletins',
+  [Perm.PATROL_READ]: 'View patrol records',
+  [Perm.PATROL_WRITE]: 'Start and update patrols',
+  [Perm.EVENT_WRITE]: 'Create and manage events',
+  [Perm.POST_WRITE]: 'Create and publish newsroom posts',
+  [Perm.POST_MODERATE]: 'Moderate newsroom posts',
+  [Perm.NOTIFY_WRITE]: 'Send notifications and manage campaigns',
+  [Perm.APPOINT_WRITE]: 'Manage appointments to party positions',
+  [Perm.PARTICIPATION_WRITE]: 'Create public participation processes',
+  [Perm.PARTICIPATION_COMMENT]: 'Comment on public participation',
+  [Perm.RATING_WRITE]: 'Submit service-delivery ratings',
+  [Perm.VERIFY_WRITE]: 'Verify service-delivery repairs',
+  [Perm.JOBS_INTEREST_WRITE]: 'Register own job interest',
+  [Perm.JOBS_DEMAND_READ]: 'View ward job-interest totals',
+  [Perm.JOBS_OPPORTUNITY_WRITE]: 'Post and manage job opportunities',
+  [Perm.JOBS_ADMIN]: 'Manage job categories and settings',
+  [Perm.OVERVIEW_READ]: 'View dashboards and service-delivery analytics',
+  [Perm.GEO_READ]: 'View maps and geographic analytics',
+  [Perm.GEO_READ_OWN_WARD]: 'View own ward map',
+  [Perm.AUDIT_READ]: 'View audit logs',
+  [Perm.REPORT_GENERATE]: 'Generate CRM reports',
+  [Perm.REPORT_READ]: 'View resident reports and tasks',
+  [Perm.REPORT_WRITE]: 'Submit and update resident reports',
+  [Perm.ROLE_MANAGE]: 'Manage users, roles, and permissions',
+  [Perm.MODERATE_USERS]: 'Manage user suspensions and bans',
+  [Perm.MODULE_MANAGE]: 'Manage role access to feature modules',
+  [Perm.RECRUITMENT_READ]: 'View recruitment trees and referral history',
+  [Perm.RECRUITMENT_REPORT]: 'View recruitment growth reports',
+  [Perm.RATING_SCORECARD_WRITE]: 'Submit councillor performance scorecards',
+  [Perm.RATING_SCORECARD_READ]: 'View councillor performance scorecards',
+  [Perm.RATING_ACKNOWLEDGE]: 'Acknowledge councillor performance scorecards',
+};
+
+/** Preserve an unknown permission's full identifier so its subject is not lost. */
+export function permissionLabel(permission: string): string {
+  return Object.prototype.hasOwnProperty.call(PERMISSION_LABELS, permission)
+    ? PERMISSION_LABELS[permission as PermName]
+    : permission;
+}
+
 /** What this signed-in user is allowed to do in the engagement layer. */
 export interface Caps {
   pii: boolean;
