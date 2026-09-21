@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 import { AuthProvider } from '../lib/auth';
 import SplashScreen from '../components/SplashScreen';
+import AnalyticsBeacon from '../components/AnalyticsBeacon';
 
 export const metadata: Metadata = {
   title: 'UDF Party',
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body>
         <SplashScreen />
+        <AnalyticsBeacon />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

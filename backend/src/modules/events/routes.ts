@@ -1,13 +1,18 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { query } from '../../db/pool.js';
-import { authenticate } from '../../middleware/authenticate.js';
+import { query, withTransaction } from '../../db/pool.js';
+import { authenticate, optionalAuthenticate } from '../../middleware/authenticate.js';
 import { requirePermission } from '../../middleware/authorize.js';
 import { asyncHandler } from '../../http/asyncHandler.js';
+import { boolQuery } from '../../http/query.js';
 import { ApiError } from '../../http/errors.js';
 import { Permission, type Principal } from '../../auth/permissions.js';
 import { principalSeesPlace } from '../../auth/scope.js';
+import { openRecord } from '../../security/encryption.js';
+import { uploadMedia } from '../transparency/service.js';
 import { recordAudit } from '../../security/audit.js';
 import { notify } from '../notifications/service.js';
 
@@ -46,8 +51,12 @@ const EventKind = z.enum([
 ]);
 const EventStatus = z.enum(['scheduled', 'live', 'done', 'cancelled']);
 
+/**
+ * Query-string boolean lives in http/query.ts — `z.coerce.boolean()` maps the
+ * string "false" to TRUE, which would trap the CRM in an upcoming-only list.
+ */
 const listQuery = z.object({
-  upcoming: z.coerce.boolean().default(true),
+  upcoming: boolQuery(true),
   regionCode: z.string().max(32).optional(),
   ward: z.string().max(64).optional(),
   kind: EventKind.optional(),
@@ -89,16 +98,23 @@ interface Row {
   capacity: number | null;
   rsvp_count: number;
   status: string;
+  cover_media_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
+// The `going` flag is layered on by the read route (it needs the caller), so it
+// is intentionally not part of the shared `toView` shape.
+interface ViewRow extends Row {
+  going?: boolean;
+}
+
 const SELECT = `SELECT id, title, kind, summary, body, region_code, ward, venue,
        lat::text AS lat, lng::text AS lng, starts_at, ends_at, capacity,
-       rsvp_count, status, created_at, updated_at
+       rsvp_count, status, cover_media_id, created_at, updated_at
   FROM events`;
 
-const toView = (r: Row) => ({
+const toView = (r: ViewRow) => ({
   id: r.id,
   title: r.title,
   kind: r.kind,
@@ -114,9 +130,23 @@ const toView = (r: Row) => ({
   capacity: r.capacity,
   rsvpCount: Number(r.rsvp_count ?? 0),
   status: r.status,
+  hasCover: Boolean(r.cover_media_id),
+  going: r.going ?? false,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
+
+/** Serve an event's cover bytes; the public calendar makes covers public. */
+async function loadCoverFile(mediaId: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const asset = await query<{ storage_key: string; content_type: string }>(
+    'SELECT storage_key, content_type FROM media_assets WHERE id = $1',
+    [mediaId],
+  );
+  const row = asset.rows[0];
+  if (!row) return null;
+  const buffer = await readFile(join(process.cwd(), row.storage_key));
+  return { buffer, contentType: row.content_type };
+}
 
 // LIST — public calendar.
 eventsRouter.get(
@@ -160,33 +190,233 @@ eventsRouter.get(
   }),
 );
 
-// READ (single) — public.
+// READ (single) — public. When a signed-in member is also an attendee, the
+// view carries `going` so the app button reflects their saved state on reopen.
 eventsRouter.get(
   '/:id',
+  optionalAuthenticate,
   asyncHandler(async (req, res) => {
     const r = await query<Row>(`${SELECT} WHERE id = $1`, [req.params.id]);
     if (!r.rows[0]) throw ApiError.notFound('Event not found');
-    res.json(toView(r.rows[0]!));
+    const view: ViewRow = { ...r.rows[0]! };
+    if (req.principal) {
+      const mine = await query<{ one: string }>(
+        `SELECT '1' AS one FROM event_rsvps
+          WHERE event_id = $1 AND user_id = $2 AND response = 'going' LIMIT 1`,
+        [req.params.id, req.principal.sub],
+      );
+      view.going = Boolean(mine.rows[0]);
+    }
+    res.json(toView(view));
   }),
 );
 
-// RSVP — public, counter only (no personal data collected). Rate-limited: see D42.
-eventsRouter.post(
-  '/:id/rsvp',
-  rsvpLimiter,
+// COVER — public hero image bytes for the event (the calendar itself is public).
+eventsRouter.get(
+  '/:id/cover',
   asyncHandler(async (req, res) => {
-    const r = await query<Row>(
-      `UPDATE events
-          SET rsvp_count = rsvp_count + 1
-        WHERE id = $1
-          AND (capacity IS NULL OR rsvp_count < capacity)
-        RETURNING id, title, kind, summary, body, region_code, ward, venue,
-                  lat::text AS lat, lng::text AS lng, starts_at, ends_at,
-                  capacity, rsvp_count, status, created_at, updated_at`,
+    const r = await query<{ cover_media_id: string | null }>(
+      'SELECT cover_media_id FROM events WHERE id = $1',
       [req.params.id],
     );
-    if (!r.rows[0]) throw ApiError.conflict('Event is full or does not exist');
-    res.json(toView(r.rows[0]!));
+    if (!r.rows[0]) throw ApiError.notFound('Event not found');
+    if (!r.rows[0].cover_media_id) throw ApiError.notFound('Event has no cover image');
+    const file = await loadCoverFile(r.rows[0].cover_media_id);
+    if (!file) throw ApiError.notFound('Cover image not found');
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Public, no-auth image meant to be embedded anywhere. Helmet applies a global
+    // CORP of `same-site`, which blocks the mobile WebView (origin http://localhost)
+    // from rendering this cross-site inside an <img>; widen it for this response only.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.send(file.buffer);
+  }),
+);
+
+/**
+ * RSVP — now login-required and NAMED. Historically this only incremented an
+ * anonymous `rsvp_count`, so the backoffice saw a total but never who was
+ * coming. It records one row per account (`event_rsvps`, UNIQUE event+user), so
+ * "one per member" is a database guarantee and a repeat call is idempotent.
+ * `response` is 'going' (counts toward capacity) or 'interested' (a softer
+ * signal). The rate limiter stays as defence-in-depth against capacity spam.
+ */
+const rsvpWriteSchema = z.object({
+  response: z.enum(['going', 'interested']).default('going'),
+});
+eventsRouter.post(
+  '/:id/rsvp',
+  authenticate,
+  rsvpLimiter,
+  asyncHandler(async (req, res) => {
+    const p = req.principal!;
+    const { response } = rsvpWriteSchema.parse(req.body ?? {});
+    const eventId = req.params.id!;
+
+    const outcome = await withTransaction(async (client) => {
+      const ev = await client.query<{ capacity: number | null; rsvp_count: string }>(
+        'SELECT capacity, rsvp_count FROM events WHERE id = $1 FOR UPDATE',
+        [eventId],
+      );
+      if (!ev.rows[0]) return { notFound: true } as const;
+      const capacity = ev.rows[0].capacity;
+      const count = Number(ev.rows[0].rsvp_count);
+
+      const priorRes = await client.query<{ response: string }>(
+        'SELECT response FROM event_rsvps WHERE event_id = $1 AND user_id = $2',
+        [eventId, p.sub],
+      );
+      const prior = priorRes.rows[0]?.response ?? null;
+      if (prior === response) return { ok: true } as const; // idempotent
+
+      const becomingGoing = response === 'going';
+      const wasGoing = prior === 'going';
+      if (becomingGoing && !wasGoing && capacity != null && count >= capacity) {
+        return { full: true } as const;
+      }
+
+      if (prior) {
+        await client.query(
+          `UPDATE event_rsvps SET response = $3, updated_at = now()
+            WHERE event_id = $1 AND user_id = $2`,
+          [eventId, p.sub, response],
+        );
+      } else {
+        const memberRes = await client.query<{ member_id: string | null }>(
+          'SELECT member_id FROM users WHERE id = $1',
+          [p.sub],
+        );
+        await client.query(
+          `INSERT INTO event_rsvps (event_id, user_id, member_id, response)
+           VALUES ($1, $2, $3, $4)`,
+          [eventId, p.sub, memberRes.rows[0]?.member_id ?? null, response],
+        );
+      }
+      // Keep the cached capacity counter in step with the rows.
+      if (becomingGoing && !wasGoing) {
+        await client.query('UPDATE events SET rsvp_count = rsvp_count + 1 WHERE id = $1', [eventId]);
+      } else if (wasGoing && !becomingGoing) {
+        await client.query(
+          'UPDATE events SET rsvp_count = GREATEST(rsvp_count - 1, 0) WHERE id = $1',
+          [eventId],
+        );
+      }
+      return { ok: true } as const;
+    });
+
+    if (outcome.notFound) throw ApiError.notFound('Event not found');
+    if (outcome.full) throw ApiError.conflict('Event is full');
+
+    const r = await query<Row>(`${SELECT} WHERE id = $1`, [eventId]);
+    res.json(toView({ ...r.rows[0]!, going: response === 'going' }));
+  }),
+);
+
+// Cancel my RSVP — removes the row and releases the capacity slot. Idempotent.
+eventsRouter.delete(
+  '/:id/rsvp',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const p = req.principal!;
+    const eventId = req.params.id!;
+    await withTransaction(async (client) => {
+      const del = await client.query<{ response: string }>(
+        'DELETE FROM event_rsvps WHERE event_id = $1 AND user_id = $2 RETURNING response',
+        [eventId, p.sub],
+      );
+      if (del.rows[0]?.response === 'going') {
+        await client.query(
+          'UPDATE events SET rsvp_count = GREATEST(rsvp_count - 1, 0) WHERE id = $1',
+          [eventId],
+        );
+      }
+    });
+    const r = await query<Row>(`${SELECT} WHERE id = $1`, [eventId]);
+    if (!r.rows[0]) throw ApiError.notFound('Event not found');
+    res.json(toView({ ...r.rows[0]!, going: false }));
+  }),
+);
+
+/**
+ * ATTENDEES — the backoffice guest list. Gated on `event:write` + the same
+ * territory check as editing the event, so only an organiser who owns the
+ * event's region/ward can pull the names. Resolving a member's name decrypts
+ * their sealed PII, so the whole read is audited (`event.attendees.read`).
+ */
+eventsRouter.get(
+  '/:id/attendees',
+  authenticate,
+  requirePermission(Permission.EVENT_WRITE),
+  asyncHandler(async (req, res) => {
+    const p = req.principal!;
+    const ev = await query<{ region_code: string | null; ward: string | null }>(
+      'SELECT region_code, ward FROM events WHERE id = $1',
+      [req.params.id],
+    );
+    if (!ev.rows[0]) throw ApiError.notFound('Event not found');
+    await assertScope(p, ev.rows[0]);
+
+    const rows = await query<{
+      member_id: string | null;
+      membership_no: string | null;
+      ward: string | null;
+      member_sealed: any;
+      user_id: string;
+      user_sealed: any;
+      response: string;
+      created_at: string;
+    }>(
+      `SELECT er.member_id, m.membership_no, m.ward, m.sealed_pii AS member_sealed,
+              u.id AS user_id, u.sealed_pii AS user_sealed, er.response, er.created_at
+         FROM event_rsvps er
+         JOIN users u ON u.id = er.user_id
+         LEFT JOIN members m ON m.id = er.member_id
+        WHERE er.event_id = $1
+        ORDER BY er.created_at ASC`,
+      [req.params.id],
+    );
+
+    const items: Array<{
+      name: string | null;
+      membershipNo: string | null;
+      ward: string | null;
+      response: string;
+      at: string;
+    }> = [];
+    let decrypted = false;
+    for (const row of rows.rows) {
+      let name: string | null = null;
+      const sealed = row.member_id ? row.member_sealed : row.user_sealed;
+      const ctxId = row.member_id ?? row.user_id;
+      if (sealed?.fields) {
+        try {
+          name = (await openRecord(ctxId!, sealed)).fullName ?? null;
+          decrypted = true;
+        } catch {
+          name = null;
+        }
+      }
+      items.push({
+        name,
+        membershipNo: row.membership_no ?? null,
+        ward: row.ward ?? null,
+        response: row.response,
+        at: row.created_at,
+      });
+    }
+
+    await recordAudit({
+      action: 'event.attendees.read',
+      actorId: p.sub,
+      actorRole: p.role,
+      targetType: 'event',
+      targetId: req.params.id,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      metadata: { count: items.length, decrypted },
+    });
+
+    res.json({ items, total: items.length });
   }),
 );
 
@@ -228,7 +458,7 @@ eventsRouter.post(
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id, title, kind, summary, body, region_code, ward, venue,
                  lat::text AS lat, lng::text AS lng, starts_at, ends_at,
-                 capacity, rsvp_count, status, created_at, updated_at`,
+                 capacity, rsvp_count, status, cover_media_id, created_at, updated_at`,
       [
         input.title,
         input.kind,
@@ -316,7 +546,7 @@ eventsRouter.patch(
       `UPDATE events SET ${sets.join(', ')} WHERE id = $${params.length}
        RETURNING id, title, kind, summary, body, region_code, ward, venue,
                  lat::text AS lat, lng::text AS lng, starts_at, ends_at,
-                 capacity, rsvp_count, status, created_at, updated_at`,
+                 capacity, rsvp_count, status, cover_media_id, created_at, updated_at`,
       params,
     );
     const event = toView(r.rows[0]!);
@@ -372,5 +602,63 @@ eventsRouter.delete(
       userAgent: req.get('user-agent') ?? null,
     });
     res.status(204).end();
+  }),
+);
+
+// ── Cover image (organiser-only; inherits the EVENT_WRITE gate above) ───────
+/**
+ * Set/replace an event's dedicated cover image. The bytes go through the same
+ * media pipeline as attachments; only the resulting asset id is stored on the
+ * event. Re-uploading swaps the cover (the old asset row is left for GC, exactly
+ * as attachment replacement behaves).
+ */
+const coverSchema = z.object({ dataUrl: z.string().min(16).max(8 * 1024 * 1024) });
+eventsRouter.post(
+  '/:id/cover',
+  asyncHandler(async (req, res) => {
+    const p = req.principal!;
+    const ev = await query<{ region_code: string | null; ward: string | null }>(
+      'SELECT region_code, ward FROM events WHERE id = $1',
+      [req.params.id],
+    );
+    if (!ev.rows[0]) throw ApiError.notFound('Event not found');
+    await assertScope(p, ev.rows[0]);
+
+    const { dataUrl } = coverSchema.parse(req.body);
+    const stored = await uploadMedia({ dataUrl, captureMode: 'photo' }, p);
+    await query('UPDATE events SET cover_media_id = $2, updated_at = now() WHERE id = $1', [
+      req.params.id,
+      stored.id,
+    ]);
+
+    await recordAudit({
+      action: 'event.cover.update',
+      actorId: p.sub,
+      actorRole: p.role,
+      targetType: 'event',
+      targetId: req.params.id,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+      metadata: { mediaId: stored.id },
+    });
+    res.json({ ok: true, hasCover: true });
+  }),
+);
+
+// Remove the cover.
+eventsRouter.delete(
+  '/:id/cover',
+  asyncHandler(async (req, res) => {
+    const p = req.principal!;
+    const ev = await query<{ region_code: string | null; ward: string | null }>(
+      'SELECT region_code, ward FROM events WHERE id = $1',
+      [req.params.id],
+    );
+    if (!ev.rows[0]) throw ApiError.notFound('Event not found');
+    await assertScope(p, ev.rows[0]);
+    await query('UPDATE events SET cover_media_id = NULL, updated_at = now() WHERE id = $1', [
+      req.params.id,
+    ]);
+    res.json({ ok: true, hasCover: false });
   }),
 );

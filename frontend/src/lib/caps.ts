@@ -111,6 +111,15 @@ export const Perm = {
   RATING_SCORECARD_WRITE: 'rating:scorecard_write',
   RATING_SCORECARD_READ: 'rating:scorecard_read',
   RATING_ACKNOWLEDGE: 'rating:acknowledge',
+  /**
+   * SuperAdmin operations surface (owned by the `superadmin` module, held only by
+   * the `superadmin` role). None has a `Caps` flag — the CRM Platform nav gates
+   * directly via `can(perms, Perm.X)`, so disabling the `superadmin` module
+   * strips all three and every Platform screen disappears together.
+   */
+  PLATFORM_READ: 'platform:read',
+  ANALYTICS_READ: 'analytics:read',
+  CONTENT_MANAGE: 'content:manage',
 } as const;
 
 export type PermName = (typeof Perm)[keyof typeof Perm];
@@ -161,6 +170,9 @@ const PERMISSION_LABELS: Record<PermName, string> = {
   [Perm.RATING_SCORECARD_WRITE]: 'Submit councillor performance scorecards',
   [Perm.RATING_SCORECARD_READ]: 'View councillor performance scorecards',
   [Perm.RATING_ACKNOWLEDGE]: 'Acknowledge councillor performance scorecards',
+  [Perm.PLATFORM_READ]: 'View platform operations (server, crons, live status)',
+  [Perm.ANALYTICS_READ]: 'View first-party website and app analytics',
+  [Perm.CONTENT_MANAGE]: 'Edit website content blocks',
 };
 
 /** Preserve an unknown permission's full identifier so its subject is not lost. */

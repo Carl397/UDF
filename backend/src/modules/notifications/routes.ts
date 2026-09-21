@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requirePermission } from '../../middleware/authorize.js';
 import { asyncHandler } from '../../http/asyncHandler.js';
+import { boolQuery } from '../../http/query.js';
 import { ApiError } from '../../http/errors.js';
 import { Permission } from '../../auth/permissions.js';
 import { STAFF_ROLES } from '../../auth/scope.js';
@@ -12,7 +13,8 @@ import * as service from './service.js';
 export const notificationsRouter = Router();
 
 const listQuery = z.object({
-  unread: z.coerce.boolean().optional(),
+  // boolQuery, not z.coerce.boolean(): "false" must mean false, not "show unread only".
+  unread: boolQuery(false).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -30,9 +32,12 @@ notificationsRouter.use(authenticate);
 notificationsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const q = listQuery.parse(req.query);
+    const { unread, ...rest } = listQuery.parse(req.query);
     const isStaff = STAFF_ROLES.has(req.principal!.role);
-    res.json(await service.list(req.principal!.sub, { ...q, isStaff }));
+    // service.list reads `unreadOnly`; map the parsed `unread` query flag onto it,
+    // otherwise ?unread=true is silently ignored and the bell keeps showing read
+    // messages instead of clearing them.
+    res.json(await service.list(req.principal!.sub, { ...rest, unreadOnly: unread, isStaff }));
   }),
 );
 

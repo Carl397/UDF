@@ -1,0 +1,12 @@
+-- Ward councillor roster: drop the "Party list #N" / "UDF candidate" role labels
+-- from every card. The public homepage now shows only each councillor's name and
+-- their ward numbers; the party-list position is no longer surfaced.
+--
+-- The role_label column is kept (editors can still set one from /crm/candidates),
+-- but every seeded row is blanked here. The public feed returns roleLabel: '' →
+-- udf-content.js's `if (c.roleLabel)` guard renders no role line, and the CRM
+-- table shows "—". The matching static fallback cards in website/index.html have
+-- their <p class="council-role"> lines removed so the no-JS markup agrees.
+--
+-- Idempotent: re-running only re-asserts the empty label.
+UPDATE ward_candidates SET role_label = '', updated_at = now() WHERE role_label <> '';

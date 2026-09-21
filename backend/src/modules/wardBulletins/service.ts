@@ -22,10 +22,13 @@ export interface WardBulletin {
   publishedAt: Date;
   createdAt: Date;
   updatedAt: Date;
+  /** True when a dedicated cover image is set (its bytes are served separately). */
+  hasCover: boolean;
 }
 
 const BULLETIN_FIELDS = `id, ward_code AS "wardCode", councillor_member_id AS "councillorMemberId",
             kind, title, body, status, published_at AS "publishedAt",
+            (cover_media_id IS NOT NULL) AS "hasCover",
             created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 export async function createBulletin(

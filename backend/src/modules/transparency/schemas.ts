@@ -23,7 +23,7 @@ export type CreateTransparencyRating = z.infer<typeof createTransparencyRatingSc
 export const uploadMediaSchema = z.object({
   /** data: URL (base64) of the captured asset. */
   dataUrl: z.string().min(16).max(8 * 1024 * 1024),
-  captureMode: z.enum(['photo', 'video', 'voice_note', 'audio']).default('photo'),
+  captureMode: z.enum(['photo', 'video', 'voice_note', 'audio', 'document']).default('photo'),
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
   accuracyM: z.coerce.number().positive().optional(),
@@ -40,21 +40,43 @@ export const reportMediaSchema = z.object({
 });
 
 /**
+ * Mainland South Africa bounding box (inclusive). Land borders run roughly
+ * lat -22.1 (Limpopo north) to -34.99 (Cape Agulhas) and lng 16.45 (Orange
+ * river mouth) to 32.95 (Kosi Bay east). Anything outside this rectangle is
+ * not a place we can route a ward report to, so we reject it up front with a
+ * clear message rather than the generic "no supported ward" the PostGIS lookup
+ * would otherwise return.
+ */
+export const SA_BBOX = { latMin: -34.99, latMax: -22.1, lngMin: 16.45, lngMax: 32.95 } as const;
+
+function inSouthAfrica(lat: number | undefined, lng: number | undefined): boolean {
+  if (lat == null || lng == null) return true; // no coords: ward falls back to profile
+  return lat >= SA_BBOX.latMin && lat <= SA_BBOX.latMax && lng >= SA_BBOX.lngMin && lng <= SA_BBOX.lngMax;
+}
+
+/**
  * Resident → ward councillor report (FR: "send information to my councillor").
  * Location is optional; when present the ward is resolved from the point,
- * otherwise it falls back to the member's own ward.
+ * otherwise it falls back to the member's own ward. Coordinates, when given,
+ * must be inside South Africa — UDF resident reporting has no coverage abroad.
  */
-export const createResidentReportSchema = z.object({
-  requestId: z.string().uuid().optional(),
-  category: z.string().trim().min(1).max(40),
-  message: z.string().trim().min(1).max(4000),
-  lat: z.coerce.number().min(-90).max(90).optional(),
-  lng: z.coerce.number().min(-180).max(180).optional(),
-  accuracyM: z.coerce.number().positive().optional(),
-  /** Optional explicit ward; otherwise resolved from geo or the member profile. */
-  wardCode: z.string().max(64).optional(),
-  media: z.array(reportMediaSchema).max(6).default([]),
-}).refine((v) => (v.lat == null) === (v.lng == null), { message: 'Provide both latitude and longitude' });
+export const createResidentReportSchema = z
+  .object({
+    requestId: z.string().uuid().optional(),
+    category: z.string().trim().min(1).max(40),
+    message: z.string().trim().min(1).max(4000),
+    lat: z.coerce.number().min(-90).max(90).optional(),
+    lng: z.coerce.number().min(-180).max(180).optional(),
+    accuracyM: z.coerce.number().positive().optional(),
+    /** Optional explicit ward; otherwise resolved from geo or the member profile. */
+    wardCode: z.string().max(64).optional(),
+    media: z.array(reportMediaSchema).max(6).default([]),
+  })
+  .refine((v) => (v.lat == null) === (v.lng == null), { message: 'Provide both latitude and longitude' })
+  .refine((v) => inSouthAfrica(v.lat, v.lng), {
+    message: 'Resident reports are only supported within South Africa',
+    path: ['lat'],
+  });
 export type CreateResidentReport = z.infer<typeof createResidentReportSchema>;
 
 /**

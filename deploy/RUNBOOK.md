@@ -637,11 +637,20 @@ sudo nano /etc/udf/udf-api.env
 
 Set (per the updated `production.env.example`):
 ```
-CORS_ORIGINS=https://crm.udf-party.co.za,https://102.68.98.129,http://localhost
+CORS_ORIGINS=https://crm.udf-party.co.za,https://udf-party.co.za,https://www.udf-party.co.za,https://102.68.98.129,http://localhost
 PUBLIC_BASE_URL=https://crm.udf-party.co.za
 ENABLE_HSTS=true
 MAIL_FROM="UDF Party <no-reply@udf-party.co.za>"
 ```
+
+> **Apex origin is required.** The marketing site at `https://udf-party.co.za`
+> hydrates its councillor roster and CMS blocks by fetching
+> `https://crm.udf-party.co.za/api/public/*` cross-origin. If the apex (and `www`)
+> are missing from `CORS_ORIGINS`, those fetches are silently CORS-blocked and the
+> public cards never show uploaded photos — they fall back to the name-only static
+> grid. Verify after any env change:
+> `curl -s -D - -o /dev/null -H 'Origin: https://udf-party.co.za' https://crm.udf-party.co.za/api/public/candidates | grep -i access-control-allow-origin`
+> must echo `access-control-allow-origin: https://udf-party.co.za`.
 
 Dry-run the env gate (RUNBOOK §13 lesson) **before** restarting, then restart:
 ```bash

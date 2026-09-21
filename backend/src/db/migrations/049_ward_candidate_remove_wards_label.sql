@@ -1,0 +1,13 @@
+-- Ward councillor roster: drop the ward-number line from every card too. After
+-- 048 removed the "Party list #N" role label, the public homepage cards now show
+-- only each councillor's NAME (plus a photo slot). This also clears MICHAEL JACK
+-- POGGENPOEL's "Regional list" wards line.
+--
+-- The wards_label column is kept (editors can still set one from /crm/candidates);
+-- only the seeded values are blanked. The public feed returns wardsLabel: '' →
+-- udf-content.js's `if (c.wardsLabel)` guard renders no ward line, and the CRM
+-- table shows "—". The matching static fallback cards in website/index.html have
+-- their <p class="council-wards"> lines removed so the no-JS markup agrees.
+--
+-- Idempotent: re-running only re-asserts the empty label.
+UPDATE ward_candidates SET wards_label = '', updated_at = now() WHERE wards_label <> '';

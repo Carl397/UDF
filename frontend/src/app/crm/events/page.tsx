@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
+import { AttachmentManager } from '../../../components/crm/AttachmentManager';
+import { CoverEditor } from '../../../components/crm/CoverEditor';
+import { EventAttendees } from '../../../components/crm/EventAttendees';
 import {
   CrmPageHeader, CrmStatGrid, CrmTable, CrmBadge, CrmFilters, CrmModal, CrmField,
   CrmButton, CrmSmallButton, downloadCsv, fmtDateTime,
@@ -20,11 +23,19 @@ export default function CrmEvents() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ kind: '', status: '' });
   const [showCreate, setShowCreate] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ title: '', kind: 'meeting', startsAt: '', regionCode: '', venue: '' });
+  const [attachFor, setAttachFor] = useState<{ id: string; title: string } | null>(null);
+  const [coverFor, setCoverFor] = useState<{ id: string; title: string; hasCover: boolean } | null>(null);
+  const [attendeesFor, setAttendeesFor] = useState<{ id: string; title: string } | null>(null);
 
   const load = () => {
     setLoading(true);
-    const params: Record<string, string> = { limit: '200' };
+    // upcoming=false: the CRM must also see events that already started —
+    // otherwise a rally vanishes from the table mid-event and can never be
+    // marked done, cancelled or deleted. The public calendar keeps its own
+    // upcoming-only default.
+    const params: Record<string, string> = { limit: '200', upcoming: 'false' };
     if (filter.kind) params.kind = filter.kind;
     if (filter.status) params.status = filter.status;
     api
@@ -36,19 +47,61 @@ export default function CrmEvents() {
 
   useEffect(load, [filter]);
 
+  const resetForm = () => {
+    setForm({ title: '', kind: 'meeting', startsAt: '', regionCode: '', venue: '' });
+    setEditingId(null);
+  };
+
   const create = async () => {
     try {
-      await api.createEvent({
+      const payload: Record<string, unknown> = {
         title: form.title,
         kind: form.kind,
         startsAt: new Date(form.startsAt).toISOString(),
         regionCode: form.regionCode || undefined,
         venue: form.venue || undefined,
-      });
+      };
+      if (editingId) {
+        await api.updateEvent(editingId, payload);
+      } else {
+        await api.createEvent(payload);
+      }
       setShowCreate(false);
+      resetForm();
       load();
     } catch {
-      alert('Failed to create event.');
+      alert(editingId ? 'Failed to update event.' : 'Failed to create event.');
+    }
+  };
+
+  // ISO → the value shape a `datetime-local` input expects, in local time.
+  const toLocalInput = (iso: string | null): string => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const openEdit = (e: any) => {
+    setEditingId(e.id);
+    setForm({
+      title: e.title ?? '',
+      kind: e.kind ?? 'meeting',
+      startsAt: toLocalInput(e.startsAt),
+      regionCode: e.regionCode ?? '',
+      venue: e.venue ?? '',
+    });
+    setShowCreate(true);
+  };
+
+  const remove = async (id: string, title: string) => {
+    if (!window.confirm(`Delete event "${title}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteEvent(id);
+      load();
+    } catch {
+      alert('Failed to delete event.');
     }
   };
 
@@ -68,7 +121,7 @@ export default function CrmEvents() {
       <CrmPageHeader
         title="Events"
         subtitle="Party events with RSVP tracking and lifecycle status."
-        actions={<CrmButton onClick={() => setShowCreate(true)}>+ Create Event</CrmButton>}
+        actions={<CrmButton onClick={() => { resetForm(); setShowCreate(true); }}>+ Create Event</CrmButton>}
       />
 
       <CrmStatGrid
@@ -119,11 +172,16 @@ export default function CrmEvents() {
             e.rsvpCount ?? 0,
             e.regionCode ?? '—',
             <span key="a">
+              <CrmSmallButton onClick={() => openEdit(e)}>Edit</CrmSmallButton>{' '}
+              <CrmSmallButton onClick={() => setCoverFor({ id: e.id, title: e.title, hasCover: !!e.hasCover })}>Cover</CrmSmallButton>{' '}
+              <CrmSmallButton onClick={() => setAttendeesFor({ id: e.id, title: e.title })}>Attendees</CrmSmallButton>{' '}
+              <CrmSmallButton onClick={() => setAttachFor({ id: e.id, title: e.title })}>Attachments</CrmSmallButton>{' '}
               {e.status === 'scheduled' && <CrmSmallButton onClick={() => setStatus(e.id, 'live')}>Go Live</CrmSmallButton>}
               {e.status === 'live' && <CrmSmallButton onClick={() => setStatus(e.id, 'done')}>Mark Done</CrmSmallButton>}
               {e.status !== 'cancelled' && e.status !== 'done' && (
                 <CrmSmallButton danger onClick={() => setStatus(e.id, 'cancelled')}>Cancel</CrmSmallButton>
-              )}
+              )}{' '}
+              <CrmSmallButton danger onClick={() => remove(e.id, e.title)}>Delete</CrmSmallButton>
             </span>,
           ])}
           empty="No events found."
@@ -131,7 +189,7 @@ export default function CrmEvents() {
       )}
 
       {showCreate && (
-        <CrmModal title="Create Event" onClose={() => setShowCreate(false)}>
+        <CrmModal title={editingId ? 'Edit Event' : 'Create Event'} onClose={() => { setShowCreate(false); resetForm(); }}>
           <CrmField label="Title">
             <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </CrmField>
@@ -152,10 +210,38 @@ export default function CrmEvents() {
             <input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} />
           </CrmField>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <CrmButton variant="secondary" onClick={() => setShowCreate(false)}>Cancel</CrmButton>
-            <CrmButton onClick={create} disabled={!form.title || !form.startsAt}>Create</CrmButton>
+            <CrmButton variant="secondary" onClick={() => { setShowCreate(false); resetForm(); }}>Cancel</CrmButton>
+            <CrmButton onClick={create} disabled={!form.title || !form.startsAt}>{editingId ? 'Save changes' : 'Create'}</CrmButton>
           </div>
         </CrmModal>
+      )}
+
+      {attachFor && (
+        <AttachmentManager
+          parentType="event"
+          parentId={attachFor.id}
+          parentTitle={attachFor.title}
+          onClose={() => setAttachFor(null)}
+        />
+      )}
+
+      {coverFor && (
+        <CoverEditor
+          parentType="event"
+          parentId={coverFor.id}
+          parentTitle={coverFor.title}
+          hasCover={coverFor.hasCover}
+          onClose={() => setCoverFor(null)}
+          onSaved={load}
+        />
+      )}
+
+      {attendeesFor && (
+        <EventAttendees
+          eventId={attendeesFor.id}
+          eventTitle={attendeesFor.title}
+          onClose={() => setAttendeesFor(null)}
+        />
       )}
     </div>
   );

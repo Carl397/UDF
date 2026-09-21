@@ -41,6 +41,7 @@ export const ModuleKey = {
   ADMIN: 'admin',
   RECRUITMENT: 'recruitment',
   SCORECARDS: 'scorecards',
+  SUPERADMIN: 'superadmin',
 } as const;
 
 export type ModuleKey = (typeof ModuleKey)[keyof typeof ModuleKey];

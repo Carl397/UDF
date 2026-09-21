@@ -90,14 +90,18 @@ ul { margin: 0; padding: 0; list-style: none; }
 .brand-name small { display: block; font-size: .72rem; color: var(--gold); letter-spacing: .16em; }
 
 .site-nav { margin-left: auto; }
-.site-nav ul { display: flex; gap: 4px; align-items: center; }
+.site-nav ul { display: flex; gap: 2px; align-items: center; }
 .site-nav a {
   font-family: var(--font-cond); font-weight: 600; text-transform: uppercase;
-  letter-spacing: .06em; font-size: 1.02rem; text-decoration: none;
-  padding: 10px 12px; color: #f4efe7;
+  letter-spacing: .04em; font-size: .9rem; text-decoration: none;
+  line-height: 1; white-space: nowrap; padding: 9px 9px; color: #f4efe7;
 }
 .site-nav a:hover { color: var(--gold); }
 .site-nav a[aria-current="page"] { color: var(--gold); box-shadow: inset 0 -3px 0 var(--gold); }
+.site-nav .nav-cta {
+  margin-left: 8px; padding: 9px 15px; font-size: .82rem; line-height: 1;
+  box-shadow: 3px 3px 0 var(--red); align-self: center;
+}
 
 .nav-toggle {
   display: none; flex-direction: column; justify-content: center; gap: 5px;
@@ -324,6 +328,39 @@ ul { margin: 0; padding: 0; list-style: none; }
   .leader-grid { grid-template-columns: 1fr; }
   .leader-photo { max-width: 440px; }
 }
+
+/* Ward councillors ---------------------------------------------------------------------- */
+/* Cards ship in the HTML and are also built by udf-content.js from the live roster, so
+   the markup stays deliberately simple: photo (or initials), name, list/ward labels. */
+.council-grid {
+  display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.council-card {
+  background: var(--card); border: 2px solid var(--black);
+  box-shadow: var(--shadow-sm); padding: 20px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+}
+.council-photo {
+  width: 92px; height: 92px; border-radius: 50%; object-fit: cover;
+  background: var(--red-soft); border: 3px solid var(--black);
+  font-family: var(--font-display); font-size: 1.7rem; color: var(--red-deep);
+  display: grid; place-items: center; overflow: hidden;
+}
+.council-card h3 {
+  font-family: var(--font-cond); font-weight: 700; font-size: 1.05rem;
+  letter-spacing: .03em; text-transform: uppercase; line-height: 1.2;
+}
+.council-role {
+  font-family: var(--font-cond); text-transform: uppercase; letter-spacing: .08em;
+  font-weight: 700; font-size: .8rem; color: var(--red); margin: 0;
+}
+.council-wards {
+  font-size: .82rem; color: var(--grey); margin: 0;
+  border-top: 2px solid var(--gold); padding-top: 6px; margin-top: 2px; width: 100%;
+}
+.council-bio { font-size: .85rem; color: var(--grey); margin: 0; }
+@media (max-width: 460px) { .council-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
 
 /* Vote strip ---------------------------------------------------------------------------- */
 .vote { background: var(--gold); color: #111; border-block: 4px solid var(--black); }

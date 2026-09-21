@@ -16,6 +16,7 @@ import {
   issueToken,
 } from '../memberships/service.js';
 import { PARTY_PROFILE, MANIFESTO, STANDS_FOR, TERMS, TERMS_VERSION } from './content.js';
+import { getPublishedBlocks } from '../content/service.js';
 import { loadPublicLeaderMedia } from '../crm/mediaService.js';
 import { buildPartyCard } from '../cardstudio/service.js';
 
@@ -50,6 +51,10 @@ publicRouter.get(
     }
     res.setHeader('Content-Type', media.contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Public, no-auth image meant to be embedded anywhere. Helmet applies a global
+    // CORP of `same-site`, which blocks the mobile WebView (origin http://localhost)
+    // from rendering this cross-site inside an <img>; widen it for this response only.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.send(media.buffer);
   }),
 );
@@ -62,6 +67,47 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: { code: 'too_many_requests', message: 'Too many registrations — try later' } },
 });
+
+/** Keep a published string only when it is non-empty, else fall back to static. */
+function keepStr(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
+/**
+ * Read the published content blocks for hydration, never throwing: the public
+ * `/meta` and `/manifesto` surfaces must keep serving the coded defaults if the
+ * content tables are mid-migration or a block is absent, so a CMS hiccup cannot
+ * take down the register/manifesto pages.
+ */
+async function publishedBlocksSafe(): Promise<Record<string, { data: unknown; publishedAt: string }>> {
+  try {
+    return await getPublishedBlocks();
+  } catch {
+    return {};
+  }
+}
+
+/** Overlay the published `shared.brand` block onto the coded PARTY_PROFILE. */
+async function publishedParty(): Promise<typeof PARTY_PROFILE> {
+  const blocks = await publishedBlocksSafe();
+  const b = blocks['shared.brand']?.data as
+    | { name?: string; fullName?: string; tagline?: string; slogan?: string; email?: string; website?: string; address?: string }
+    | undefined;
+  if (!b) return PARTY_PROFILE;
+  return {
+    ...PARTY_PROFILE,
+    name: keepStr(b.name, PARTY_PROFILE.name),
+    fullName: keepStr(b.fullName, PARTY_PROFILE.fullName),
+    tagline: keepStr(b.tagline, PARTY_PROFILE.tagline),
+    slogan: keepStr(b.slogan, PARTY_PROFILE.slogan),
+    contacts: {
+      ...PARTY_PROFILE.contacts,
+      email: keepStr(b.email, PARTY_PROFILE.contacts.email),
+      website: keepStr(b.website, PARTY_PROFILE.contacts.website),
+      address: keepStr(b.address, PARTY_PROFILE.contacts.address),
+    },
+  } as typeof PARTY_PROFILE;
+}
 
 publicRouter.get(
   '/meta',
@@ -89,7 +135,7 @@ publicRouter.get(
     }>('SELECT code, name, level, tier, description, term_months FROM positions ORDER BY level, name');
 
     res.json({
-      party: PARTY_PROFILE,
+      party: await publishedParty(),
       standsFor: STANDS_FOR,
       regions: regions.rows.map((r) => ({
         code: r.code,
@@ -115,7 +161,18 @@ publicRouter.get(
 publicRouter.get(
   '/manifesto',
   asyncHandler(async (_req, res) => {
-    res.json({ party: PARTY_PROFILE, standsFor: STANDS_FOR, ...MANIFESTO });
+    const blocks = await publishedBlocksSafe();
+    const home = blocks['marketing.home']?.data as
+      | { mission?: string; vision?: string }
+      | undefined;
+    const manifesto = home
+      ? {
+          ...MANIFESTO,
+          mission: keepStr(home.mission, MANIFESTO.mission),
+          vision: keepStr(home.vision, MANIFESTO.vision),
+        }
+      : MANIFESTO;
+    res.json({ party: await publishedParty(), standsFor: STANDS_FOR, ...manifesto });
   }),
 );
 

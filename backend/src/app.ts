@@ -18,6 +18,7 @@ import { appointmentsRouter } from './modules/appointments/routes.js';
 import { notificationsRouter } from './modules/notifications/routes.js';
 import { serviceRequestsRouter } from './modules/serviceRequests/routes.js';
 import { wardBulletinsRouter } from './modules/wardBulletins/routes.js';
+import { attachmentsRouter } from './modules/attachments/routes.js';
 import { participationsRouter } from './modules/participations/routes.js';
 import { ratingsRouter } from './modules/ratings/routes.js';
 import { patrolsRouter } from './modules/patrols/routes.js';
@@ -32,6 +33,12 @@ import { scorecardsRouter } from './modules/scorecards/routes.js';
 import { cardStudioRouter } from './modules/cardstudio/routes.js';
 import { crmRouter } from './modules/crm/routes.js';
 import { moderationRouter } from './modules/moderation/routes.js';
+import { analyticsRouter } from './modules/analytics/routes.js';
+import { analyticsPublicRouter } from './modules/analytics/publicRoutes.js';
+import { superadminRouter } from './modules/platform/routes.js';
+import { contentAdminRouter, contentPublicRouter, contentPublicPagesRouter, contentPublicMediaRouter } from './modules/content/routes.js';
+import { candidatesCrmRouter } from './modules/candidates/routes.js';
+import { candidatesPublicRouter } from './modules/candidates/publicRoutes.js';
 
 export function createApp(): express.Express {
   const app = express();
@@ -95,6 +102,7 @@ export function createApp(): express.Express {
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/service-requests', serviceRequestsRouter);
   app.use('/api/ward-bulletins', wardBulletinsRouter);
+  app.use('/api/attachments', attachmentsRouter);
   app.use('/api/participations', participationsRouter);
   app.use('/api/ratings', ratingsRouter);
   app.use('/api/patrols', patrolsRouter);
@@ -118,6 +126,27 @@ export function createApp(): express.Express {
   app.use('/api/id-card', cardStudioRouter);
   // Public petitions (view open + member sign) under the public namespace.
   app.use('/api/public/petitions', petitionsRouter);
+  // First-party analytics ingest + counted APK download (anonymous, cookieless).
+  app.use('/api/public', analyticsPublicRouter);
+  // Structured website content, published blocks only (anonymous hydration).
+  app.use('/api/public/content', contentPublicRouter);
+  // Published CMS pages (ordered block sections), for marketing + in-app renderers.
+  app.use('/api/public/pages', contentPublicPagesRouter);
+  // Images referenced by CMS content (allow-listed to CMS/published media).
+  app.use('/api/public/content-media', contentPublicMediaRouter);
+  // Public "Meet our ward councillors" feed + photos (anonymous, active only).
+  app.use('/api/public/candidates', candidatesPublicRouter);
+  // SuperAdmin analytics read APIs (analytics:read).
+  app.use('/api/analytics', analyticsRouter);
+  // SuperAdmin platform ops surface (server/cron/live + SSE) and the website
+  // content editor. Mounted BEFORE the CRM router so its `overview:read`
+  // router-level gate never pre-empts the stricter `platform:read`/
+  // `content:manage` guards on these paths.
+  app.use('/api/crm/superadmin/content', contentAdminRouter);
+  // Ward-candidate roster CRUD + photos (content:manage), mounted before the
+  // general CRM router so its own permission guard is authoritative.
+  app.use('/api/crm/candidates', candidatesCrmRouter);
+  app.use('/api/crm/superadmin', superadminRouter);
   // CRM desktop endpoints (national_admin only).
   app.use('/api/crm', crmRouter);
   // Moderation ladder + device bans (national_admin only).

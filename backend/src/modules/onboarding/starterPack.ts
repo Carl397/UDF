@@ -1,6 +1,5 @@
 import { query } from '../../db/pool.js';
-import { env } from '../../config/env.js';
-import { councillorForWard } from '../transparency/service.js';
+import { councillorForWard, councillorWasFielded } from '../transparency/service.js';
 import { loadMediaBuffer } from '../crm/mediaService.js';
 import { MANIFESTO, PARTY_PROFILE } from '../public/content.js';
 import type { EmailAttachment } from '../../security/mailer.js';
@@ -14,14 +13,17 @@ import type { EmailAttachment } from '../../security/mailer.js';
  *   (b) the 6-digit OTP and "use this as your first password, then change it",
  *   (c) the ward councillor's bio brochure (name, role, bio, public office
  *       contact) and photo,
- *   (d) the mini-manifesto,
+ *   (d) the mini-manifesto (mission + pillar headlines, no outbound link — see
+ *       the note above `esc`),
  *   (e) the party leader's picture + a short line,
  *   (f) a thank-you for joining and for keeping the councillor accountable, with
  *       a pointer to the in-app rating surface (FR-S).
  *
  * Content is resolved server-side and degrades gracefully: a ward with no
- * published councillor renders a vacancy block (never a broken email), and a
- * missing photo simply omits that image. Photos are embedded as CID inline
+ * published councillor renders a vacancy block (never a broken email), worded to
+ * match why the seat is empty — vacant when UDF contested the ward, "no
+ * candidate" when it did not — and a missing photo simply omits that image.
+ * Photos are embedded as CID inline
  * attachments (FR-Q3) so they render without a third-party host and survive the
  * self-signed edge — the plaintext part still carries the OTP and every fact.
  */
@@ -59,16 +61,23 @@ const RED = PARTY_PROFILE.colors.red;
 const BLACK = PARTY_PROFILE.colors.black;
 const GOLD = PARTY_PROFILE.colors.gold;
 
+// NB: there is deliberately no `appUrl()`/PUBLIC_BASE_URL link in this email.
+// The mini-manifesto used to end with "Read the full manifesto →" pointing at
+// `${PUBLIC_BASE_URL}/manifesto`, which resolves to
+// https://crm.udf-party.co.za/manifesto. That page does not exist: the CRM
+// static export has no /manifesto route, and nginx's `try_files … /index.html`
+// fallback answers it with a 200 carrying the app shell — so the link looked
+// alive and landed members on the sign-in app instead of a manifesto. The party
+// manifesto lives on the public marketing site, whose base URL is NOT
+// PUBLIC_BASE_URL (that origin is still correct for /register and /confirm
+// links built in the memberships service). Re-add a link only against a URL
+// that is known to serve manifesto content.
 function esc(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function appUrl(path = ''): string {
-  return `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}${path}`;
 }
 
 /** Turn a stored photo into a CID-inline attachment (null when absent/unreadable). */
@@ -159,11 +168,19 @@ export async function buildStarterPackEmail(
   member: StarterPackMember,
   otp: string,
 ): Promise<RenderedEmail> {
-  const [wardName, councillor, leader] = await Promise.all([
+  const [wardName, councillor, leader, fielded] = await Promise.all([
     resolveWardName(member.wardCode),
     resolveCouncillor(member.wardCode),
     resolveLeader(),
+    member.wardCode ? councillorWasFielded(member.wardCode) : Promise.resolve(true),
   ]);
+
+  // An empty ward has two honest explanations, and a welcome email naming the
+  // wrong one is the one thing this mail can get badly wrong: a contested seat
+  // that is currently empty will be filled, while a ward the party never stood
+  // anyone in at LGE2026 had no seat to fill. A member with no ward on record
+  // is neither, so they keep the neutral wording (`fielded` defaults true).
+  const neverContested = !councillor && !fielded;
 
   const attachments: EmailAttachment[] = [];
   if (councillor?.attachment) attachments.push(councillor.attachment);
@@ -192,7 +209,9 @@ export async function buildStarterPackEmail(
       <tr><td style="padding:0 0 8px 0;">
         <h2 style="margin:0 0 10px 0;font-size:18px;color:${BLACK};">Your ward councillor</h2>
         <div style="border:1px dashed #ddd;border-radius:10px;padding:14px;background:#fafafa;color:#444;font-size:14px;line-height:1.5;">
-          The ${esc(wardName ?? 'ward')} seat is currently <strong>vacant</strong>. In the meantime, your regional
+          ${neverContested
+            ? `UDF did not field a candidate in ${esc(wardName ?? 'this ward')} at the 2026 local elections, so there is no ward councillor here.`
+            : `The ${esc(wardName ?? 'ward')} seat is currently <strong>vacant</strong>.`} In the meantime, your regional
           contact is the ${esc(PARTY_PROFILE.fullName)} National Secretariat —
           ${esc(PARTY_PROFILE.contacts.email)}.
         </div>
@@ -250,7 +269,6 @@ export async function buildStarterPackEmail(
         <tr><td style="padding:16px 0 8px 0;border-top:1px solid #f0f0f0;">
           <h2 style="margin:0 0 8px 0;font-size:18px;color:${BLACK};">The mini-manifesto</h2>
           ${miniManifestoHtml()}
-          <div style="margin-top:10px;"><a href="${esc(appUrl('/manifesto'))}" style="color:${RED};font-size:14px;font-weight:600;text-decoration:none;">Read the full manifesto →</a></div>
         </td></tr>
 
         ${leaderHtml}
@@ -278,7 +296,9 @@ export async function buildStarterPackEmail(
 
   const cText = councillor
     ? `Your ward councillor: ${councillor.fullName}${wardName ? ` (${wardName})` : ''}\n${councillor.bio ?? ''}`.trim()
-    : `Your ward seat (${wardName ?? 'your ward'}) is currently vacant. Regional contact: ${PARTY_PROFILE.contacts.email}.`;
+    : neverContested
+      ? `UDF did not field a candidate in ${wardName ?? 'your ward'} at the 2026 local elections, so there is no ward councillor here. Regional contact: ${PARTY_PROFILE.contacts.email}.`
+      : `Your ward seat (${wardName ?? 'your ward'}) is currently vacant. Regional contact: ${PARTY_PROFILE.contacts.email}.`;
   const lText = leader
     ? `A word from our ${leader.position ?? 'leadership'}, ${leader.fullName}:\n${leader.bio ?? 'Thank you for joining the movement.'}`
     : '';
@@ -298,7 +318,6 @@ ${cText}
 
 THE MINI-MANIFESTO
 ${miniManifestoText()}
-Full manifesto: ${appUrl('/manifesto')}
 
 ${lText}
 

@@ -1,6 +1,6 @@
 import { query } from '../../db/pool.js';
 import { ApiError } from '../../http/errors.js';
-import { getOverview, type CouncillorRef, type WardOverview } from '../transparency/service.js';
+import { getOverview, wardsWereFielded, type CouncillorRef, type WardOverview } from '../transparency/service.js';
 import type { MemberScope } from '../members/types.js';
 import type { Principal } from '../../auth/permissions.js';
 import { regionSummarySchema, type GeoQuery, type RegionSummaryQuery } from './schemas.js';
@@ -300,6 +300,14 @@ export interface RegionChild {
   level: string;
   members: number;
   councillor: RegionCouncillor | null;
+  /**
+   * Ward children only: did UDF stand a candidate here at LGE2026? Sits beside
+   * `councillor` so the sheet can say "no UDF candidate was fielded here" about
+   * a ward that was never contested instead of calling it a vacant seat, which
+   * would promise a by-election that cannot happen. Non-ward rows carry `true`
+   * — the question does not apply to them and they are never labelled vacant.
+   */
+  contested: boolean;
 }
 
 export interface RegionSummary {
@@ -510,14 +518,18 @@ export async function getRegionSummary(
              FROM ward_profiles wp
              JOIN leaders l ON l.member_id = wp.councillor_member_id AND l.is_public
              LEFT JOIN positions p ON p.code = l.position_code
-            WHERE wp.ward_code = ANY($1::text[]) AND l.ward_code = wp.ward_code
+            WHERE wp.ward_code = ANY($1::text[])
+              AND (l.ward_code = wp.ward_code OR wp.ward_code = ANY(l.ward_codes))
               AND (l.user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = l.user_id AND u.is_active AND u.role = 'ward_councillor' AND u.ward_code = l.ward_code))
            UNION ALL
-           SELECT l.ward_code, l.member_id, l.full_name, l.bio, l.photo_id,
+           -- Multi-ward councillors emit one row per covered ward so secondary
+           -- wards resolve too (the map keys rows by the emitted ward).
+           SELECT wc AS ward_code, l.member_id, l.full_name, l.bio, l.photo_id,
                   p.name AS position, l.contact_public, CASE WHEN l.user_id IS NOT NULL THEN 0 ELSE 2 END AS prio, l.updated_at
              FROM leaders l
+             CROSS JOIN LATERAL unnest(CASE WHEN l.ward_codes <> '{}' THEN l.ward_codes ELSE ARRAY[l.ward_code] END) AS wc
              LEFT JOIN positions p ON p.code = l.position_code
-            WHERE l.is_public AND l.ward_code = ANY($1::text[])
+            WHERE l.is_public AND wc = ANY($1::text[])
               AND (l.user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = l.user_id AND u.is_active AND u.role = 'ward_councillor' AND u.ward_code = l.ward_code))
          ) x
         ORDER BY ward_code, prio, updated_at DESC`,
@@ -537,12 +549,18 @@ export async function getRegionSummary(
     }
   }
 
+  // Which of those wards did UDF actually contest? A ward with no councillor in
+  // post is not automatically a vacant seat: in wards where no candidate was
+  // stood there was never a seat to fill, and the sheet has to be able to say so.
+  const fielded = await wardsWereFielded(wardCodes);
+
   const children: RegionChild[] = childrenRes.rows.map((c) => ({
     code: c.code,
     name: c.name,
     level: c.level,
     members: Number(c.members),
     councillor: councillors.get(c.code) ?? null,
+    contested: c.level === 'ward' ? fielded.has(c.code) : true,
   }));
 
   const isWard = region.level === 'ward';

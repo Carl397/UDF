@@ -62,13 +62,19 @@
   font-weight: 900;
 }
 .udf-nav-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
   background: #fff;
   color: var(--red-dark);
   border: none;
   border-radius: 999px;
-  padding: 9px 16px;
+  padding: 9px 18px;
   font-weight: 700;
   font-size: 13px;
+  line-height: 1;
   cursor: pointer;
   text-decoration: none;
 }
@@ -130,6 +136,7 @@
 .udf-cta-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
   margin-top: 26px;
 }
@@ -310,46 +317,108 @@
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Security band */
-.udf-sec-list {
+/* Accountability tools */
+.udf-tools {
   display: grid;
-  gap: 14px;
-  margin-top: 30px;
+  gap: 16px;
+  margin-top: 34px;
+  grid-template-columns: 1fr;
 }
-.udf-sec-item {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 16px 18px;
+@media (min-width: 880px) {
+  .udf-tools {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
-.udf-sec-num {
-  flex: none;
+.udf-tool {
+  position: relative;
+  background: var(--white);
+  border: 1px solid #eee4e0;
+  border-radius: 20px;
+  padding: 24px 22px;
+  box-shadow: 0 12px 40px rgba(20, 20, 20, 0.06);
+}
+.udf-tool-num {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--red);
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
   color: #fff;
   font-weight: 900;
+  font-size: 18px;
 }
-.udf-sec-item h4 {
-  margin: 0 0 4px;
-  font-size: 15px;
+.udf-tool h4 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 800;
 }
-.udf-sec-item p {
+.udf-tool p {
   margin: 0;
-  font-size: 13.5px;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.55;
+  font-size: 14px;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+/* Accountability banner */
+.udf-banner {
+  margin-top: 22px;
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  border-radius: 22px;
+  padding: 30px 26px;
+  text-align: center;
+  box-shadow: 0 20px 50px rgba(200, 16, 46, 0.28);
+}
+.udf-banner p {
+  margin: 0 auto;
+  max-width: 52ch;
+  font-size: clamp(17px, 2.4vw, 22px);
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+/* Download links render as <button> to hide the APK source URL. */
+button.udf-btn,
+button.udf-nav-cta {
+  font-family: inherit;
+  line-height: 1.1;
+}
+button.udf-btn img,
+button.udf-nav-cta img {
+  display: block;
+  flex: none;
+}
+
+/* Brand poster band — shows the WHOLE square illustration, fits without zoom/crop */
+.udf-poster {
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  padding: clamp(30px, 5vw, 46px) 0;
+}
+.udf-poster-in {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+.udf-poster-img {
+  width: auto;
+  height: min(46vw, 340px);
+  max-width: 86vw;
+  border-radius: 18px;
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.4);
+}
+.udf-poster-cap {
+  font-size: clamp(19px, 3vw, 27px);
+  font-weight: 900;
+  letter-spacing: -0.2px;
 }
 
 /* Notification preview */
 .udf-notif {
-  margin-top: 34px;
+  margin: 34px auto 0;
   border-radius: 18px;
   overflow: hidden;
   background: var(--white);

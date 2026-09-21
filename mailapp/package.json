@@ -1,0 +1,22 @@
+{
+  "name": "udf-mail-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "UDF Party councillor secure mail — a hardened Capacitor WebView wrapper around https://mail.udf-party.co.za (Roundcube). Single-purpose: INTERNET-only, HTTPS-only, FLAG_SECURE, non-debuggable release signed with the UDF upload key.",
+  "scripts": {
+    "cap:add:android": "cap add android",
+    "cap:sync": "cap sync android",
+    "android:assets": "node scripts/prepare-android-assets.mjs",
+    "apk:debug": "npm run cap:sync && npm run android:assets && cd android && ./gradlew assembleDebug",
+    "apk:release": "npm run cap:sync && npm run android:assets && cd android && ./gradlew --no-daemon --console=plain :app:assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/core": "^6.2.2",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.2"
+  }
+}

@@ -4,6 +4,7 @@ import type {
   AcknowledgeScorecardInput,
   Appointment,
   AppNotification,
+  Attachment,
   ApplyModerationActionInput,
   ApplyModerationActionResult,
   BannedDevice,
@@ -13,6 +14,7 @@ import type {
   CardPhoto,
   CaseStats,
   ConfirmResult,
+  EventAttendee,
   CreateJobOpportunityInput,
   CreateResidentReportInput,
   CreateResidentReportResult,
@@ -71,6 +73,8 @@ import type {
   Verification,
   VerifyCard,
   WardBulletin,
+  WardCandidate,
+  WardCandidateInput,
   WardDetail,
   WardLookupResult,
   WardOverview,
@@ -453,6 +457,177 @@ function normalizeServiceRequest(r: any): ServiceRequest {
   };
 }
 
+// ── SuperAdmin operations surface (analytics / platform / content) ─────────
+// Wire shapes mirror the backend getters under
+// `backend/src/modules/{analytics,platform,content}`. Kept local to the client
+// because they are read-model DTOs consumed only by the Platform screens.
+
+export interface AnalyticsWindow {
+  pageviews: number;
+  visitors: number;
+  sessions: number;
+  durationMs: number;
+}
+export interface AnalyticsOverview {
+  windowDays: number;
+  timezone: string;
+  current: AnalyticsWindow;
+  previous: AnalyticsWindow;
+  deltas: { pageviews: number | null; visitors: number | null; sessions: number | null };
+  avgPageviewsPerSession: number | null;
+  bySite: Array<{ site: string; pageviews: number; visitors: number }>;
+  daily: Array<{ day: string; pageviews: number; visitors: number }>;
+}
+export interface AnalyticsTraffic {
+  windowDays: number;
+  daily: Array<{ day: string; pageviews: number; visitors: number }>;
+  topPages: Array<{ path: string; views: number; visitors: number }>;
+  referrers: Array<{ host: string; views: number }>;
+  utm: Array<{ source: string; medium: string; campaign: string; views: number }>;
+}
+export interface AnalyticsDevices {
+  windowDays: number;
+  deviceType: Array<{ key: string; views: number; visitors: number }>;
+  os: Array<{ key: string; views: number; visitors: number }>;
+  browser: Array<{ key: string; views: number; visitors: number }>;
+  lang: Array<{ key: string; views: number; visitors: number }>;
+  screen: Array<{ key: string; views: number; visitors: number }>;
+}
+export interface AnalyticsRealtime {
+  computedAt: string;
+  windowMinutes: number;
+  visitorsNow: number;
+  pageviewsNow: number;
+  bySite: Array<{ site: string; visitors: number }>;
+  topPaths: Array<{ path: string; visitors: number }>;
+}
+export interface AnalyticsDownloads {
+  windowDays: number;
+  total: number;
+  uniqueIps: number;
+  daily: Array<{ day: string; downloads: number }>;
+  breakdowns: Record<string, Array<{ key: string; n: number }>>;
+}
+
+export interface ServerStatus {
+  collectedAt: string;
+  node: { version: string; uptimeSec: number; pid: number };
+  memory: { rssMb: number; heapUsedMb: number; heapTotalMb: number };
+  eventLoopLagMs: number;
+  db: {
+    reachable: boolean;
+    latencyMs: number | null;
+    pool: { total: number; idle: number; waiting: number };
+  };
+  disk: { freeMb: number | null; totalMb: number | null };
+  schema: { head: string | null };
+  externalServices: { status: 'notIntrospected'; note: string };
+}
+export interface LiveSnapshot {
+  windowMinutes: number;
+  liveUsers: number;
+  liveSessions: number;
+  byRole: Array<{ role: string; users: number }>;
+  byDevice: Array<{ device: string; sessions: number }>;
+  computedAt: string;
+}
+export interface JobHealth {
+  jobName: string;
+  lastStatus: string;
+  lastStartedAt: string;
+  lastFinishedAt: string | null;
+  lastDurationMs: number | null;
+  secondsSinceLastSuccess: number | null;
+  successRatePct: number | null;
+  recentRuns: number;
+}
+export interface JobRun {
+  jobName: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  detail: unknown;
+}
+export interface PlatformJobs {
+  health: JobHealth[];
+  recent: JobRun[];
+}
+export interface PlatformSnapshot {
+  at: string;
+  server: ServerStatus;
+  live: LiveSnapshot;
+  jobs: JobHealth[];
+  realtime: AnalyticsRealtime;
+}
+
+export type ContentBlockKind = 'fields' | 'slider' | 'section';
+export interface ContentBlockSummary {
+  key: string;
+  site: 'marketing' | 'app' | 'shared';
+  title: string;
+  kind: ContentBlockKind;
+  version: number;
+  updatedAt: string;
+  publishedAt: string | null;
+  hasPublished: boolean;
+  hasUnpublishedChanges: boolean;
+}
+export interface ContentBlockFull {
+  key: string;
+  site: 'marketing' | 'app' | 'shared';
+  title: string;
+  kind: ContentBlockKind;
+  schema: unknown;
+  draft: unknown;
+  published: unknown;
+  version: number;
+  updatedAt: string;
+  publishedAt: string | null;
+}
+export interface ContentVersion {
+  version: number;
+  createdAt: string;
+  publishedBy: string | null;
+}
+
+// CMS pages: an ordered list of block references (sections) per surface.
+export interface PageSectionRef {
+  blockKey: string;
+}
+export interface ContentPageSummary {
+  slug: string;
+  site: 'marketing' | 'app';
+  title: string;
+  version: number;
+  isActive: boolean;
+  updatedAt: string;
+  publishedAt: string | null;
+  sectionCount: number;
+  hasPublished: boolean;
+  hasUnpublishedChanges: boolean;
+}
+export interface ContentPageFull {
+  slug: string;
+  site: 'marketing' | 'app';
+  title: string;
+  sections: PageSectionRef[];
+  publishedSections: PageSectionRef[] | null;
+  publishedTitle: string | null;
+  version: number;
+  isActive: boolean;
+  updatedAt: string;
+  publishedAt: string | null;
+}
+/** The public read model: a published page with its sections resolved. */
+export interface PublicPage {
+  slug: string;
+  site: 'marketing' | 'app';
+  title: string | null;
+  publishedAt: string | null;
+  sections: Array<{ key: string; kind: ContentBlockKind; data: unknown }>;
+}
+
 // ── Auth ─────────────────────────────────────────────────────────
 export const api = {
   async login(email: string, password: string): Promise<LoginResponse> {
@@ -632,8 +807,69 @@ export const api = {
   deleteEvent(id: string): Promise<void> {
     return request(`/events/${id}`, { method: 'DELETE' });
   },
-  rsvpEvent(id: string): Promise<PartyEvent> {
-    return request(`/events/${id}/rsvp`, { method: 'POST' });
+  rsvpEvent(id: string, response: 'going' | 'interested' = 'going'): Promise<PartyEvent> {
+    return request(`/events/${id}/rsvp`, {
+      method: 'POST',
+      body: JSON.stringify({ response }),
+    });
+  },
+  cancelRsvp(id: string): Promise<PartyEvent> {
+    return request(`/events/${id}/rsvp`, { method: 'DELETE' });
+  },
+  listEventAttendees(id: string): Promise<{ items: EventAttendee[]; total: number }> {
+    return request(`/events/${id}/attendees`);
+  },
+  /** Public URL for an event's cover image (the calendar itself is public). */
+  eventCoverUrl(id: string): string {
+    return `${API_BASE}/events/${id}/cover`;
+  },
+  setEventCover(id: string, dataUrl: string): Promise<{ ok: boolean; hasCover: boolean }> {
+    return request(`/events/${id}/cover`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  },
+  deleteEventCover(id: string): Promise<{ ok: boolean; hasCover: boolean }> {
+    return request(`/events/${id}/cover`, { method: 'DELETE' });
+  },
+  setBulletinCover(id: string, dataUrl: string): Promise<{ ok: boolean; hasCover: boolean }> {
+    return request(`/ward-bulletins/${id}/cover`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  },
+  deleteBulletinCover(id: string): Promise<{ ok: boolean; hasCover: boolean }> {
+    return request(`/ward-bulletins/${id}/cover`, { method: 'DELETE' });
+  },
+  /**
+   * Fetch a cover's bytes with the bearer token so a draft bulletin's cover (not
+   * publicly served) still previews in the CRM. Returns null when absent.
+   */
+  async coverBlob(path: string, signal?: AbortSignal): Promise<Blob | null> {
+    const token = tokenStore.access;
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal,
+    });
+    return res.ok ? res.blob() : null;
+  },
+
+  // ── Ward candidates ("Meet our ward councillors" roster) ───────
+  listCandidates(): Promise<{ items: WardCandidate[]; total: number }> {
+    return request('/crm/candidates');
+  },
+  createCandidate(payload: WardCandidateInput): Promise<WardCandidate> {
+    return request('/crm/candidates', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  updateCandidate(id: string, payload: Partial<WardCandidateInput>): Promise<WardCandidate> {
+    return request(`/crm/candidates/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  deleteCandidate(id: string): Promise<void> {
+    return request(`/crm/candidates/${id}`, { method: 'DELETE' });
+  },
+  /** Public URL for a candidate photo — the same endpoint the marketing site hydrates from. */
+  candidatePhotoUrl(id: string): string {
+    return `${API_BASE}/public/candidates/${id}/photo`;
+  },
+  setCandidatePhoto(id: string, dataUrl: string): Promise<{ ok: boolean; hasPhoto: boolean }> {
+    return request(`/crm/candidates/${id}/photo`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  },
+  deleteCandidatePhoto(id: string): Promise<{ ok: boolean; hasPhoto: boolean }> {
+    return request(`/crm/candidates/${id}/photo`, { method: 'DELETE' });
   },
 
   // ── Communications: news, press, highlights, community notes ───
@@ -1021,6 +1257,45 @@ export const api = {
     return request(`/ward-bulletins/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
   },
 
+  // ── Attachments (bulletin / event: PDF, photo, short video, URL link) ──
+  listAttachments(parentType: 'bulletin' | 'event', parentId: string): Promise<{ items: Attachment[] }> {
+    return request(`/attachments?parentType=${parentType}&parentId=${parentId}`);
+  },
+  createAttachment(payload: {
+    parentType: 'bulletin' | 'event';
+    parentId: string;
+    kind: 'photo' | 'video' | 'document';
+    dataUrl: string;
+    title?: string;
+    caption?: string;
+  } | {
+    parentType: 'bulletin' | 'event';
+    parentId: string;
+    kind: 'link';
+    url: string;
+    title?: string;
+    caption?: string;
+  }): Promise<Attachment> {
+    return request('/attachments', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  deleteAttachment(id: string): Promise<void> {
+    return request(`/attachments/${id}`, { method: 'DELETE' });
+  },
+  /**
+   * Fetch a file attachment's bytes as a Blob. `<img>` / `<video>` cannot send
+   * an Authorization header, so a bulletin draft is rendered from this object
+   * URL (same pattern as `transparencyMediaBlob`); published parents also answer
+   * the plain `/attachments/:id/file` route anonymously.
+   */
+  async attachmentFileBlob(id: string, signal?: AbortSignal): Promise<Blob | null> {
+    const token = tokenStore.access;
+    const res = await fetch(`${API_BASE}/attachments/${id}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal,
+    });
+    return res.ok ? res.blob() : null;
+  },
+
   // ── Participations ──────────────────────────────────────────────
   listParticipations(params?: Record<string, string>): Promise<{ items: Participation[]; total: number }> {
     return request(`/participations${qs(params ?? {})}`);
@@ -1067,7 +1342,7 @@ export const api = {
   deletePatrol(id: string): Promise<void> {
     return request(`/patrols/${id}`, { method: 'DELETE' });
   },
-  addTrackPoint(patrolId: string, payload: unknown): Promise<{ id: string }> {
+  addTrackPoint(patrolId: string, payload: unknown): Promise<import('../types').TrackPointResult> {
     return request(`/patrols/${patrolId}/track-points`, { method: 'POST', body: JSON.stringify(payload) });
   },
   addPatrolStop(patrolId: string, payload: unknown): Promise<{ id: string }> {
@@ -1176,6 +1451,8 @@ export const api = {
     fullName?: string;
     regionCodes?: string[];
     wardCode?: string | null;
+    /** Full ward list for a councillor; the first entry becomes the primary wardCode. */
+    wardCodes?: string[];
     /** Per-person overrides on top of the role's base set. */
     permissionGrants?: string[];
     permissionRevokes?: string[];
@@ -1189,6 +1466,8 @@ export const api = {
     email?: string;
     role?: string;
     wardCode?: string | null;
+    /** Full ward list; wardCode (primary) is re-derived from its first entry. */
+    wardCodes?: string[];
     regionCodes?: string[];
     isActive?: boolean;
     permissionGrants?: string[];
@@ -1386,4 +1665,121 @@ export const api = {
   acknowledgeScorecard(id: string, payload: AcknowledgeScorecardInput = {}): Promise<ScorecardView> {
     return request(`/scorecards/${id}/acknowledge`, { method: 'POST', body: JSON.stringify(payload) });
   },
+
+  // ── SuperAdmin analytics (analytics:read) ────────────────────────
+  getAnalyticsOverview(params: { days?: number; site?: string } = {}): Promise<AnalyticsOverview> {
+    return request(`/analytics/overview${qs(params)}`);
+  },
+  getAnalyticsTraffic(params: { days?: number; site?: string } = {}): Promise<AnalyticsTraffic> {
+    return request(`/analytics/traffic${qs(params)}`);
+  },
+  getAnalyticsDevices(params: { days?: number; site?: string } = {}): Promise<AnalyticsDevices> {
+    return request(`/analytics/devices${qs(params)}`);
+  },
+  getAnalyticsRealtime(): Promise<AnalyticsRealtime> {
+    return request('/analytics/realtime');
+  },
+  getAnalyticsDownloads(params: { days?: number } = {}): Promise<AnalyticsDownloads> {
+    return request(`/analytics/downloads${qs(params)}`);
+  },
+
+  // ── SuperAdmin platform ops (platform:read) ──────────────────────
+  getServerStatus(): Promise<ServerStatus> {
+    return request('/crm/superadmin/server');
+  },
+  getLiveUsers(): Promise<LiveSnapshot> {
+    return request('/crm/superadmin/live');
+  },
+  getPlatformJobs(limit = 30): Promise<PlatformJobs> {
+    return request(`/crm/superadmin/jobs${qs({ limit })}`);
+  },
+  getPlatformSnapshot(): Promise<PlatformSnapshot> {
+    return request('/crm/superadmin/snapshot');
+  },
+
+  // ── SuperAdmin website content (content:manage) ──────────────────
+  listContentBlocks(): Promise<{ blocks: ContentBlockSummary[] }> {
+    return request('/crm/superadmin/content');
+  },
+  getContentBlock(key: string): Promise<{ block: ContentBlockFull; versions: ContentVersion[] }> {
+    return request(`/crm/superadmin/content/${encodeURIComponent(key)}`);
+  },
+  saveContentDraft(key: string, draft: unknown): Promise<{ block: ContentBlockFull }> {
+    return request(`/crm/superadmin/content/${encodeURIComponent(key)}/draft`, {
+      method: 'PUT',
+      body: JSON.stringify({ draft }),
+    });
+  },
+  publishContentBlock(key: string): Promise<{ block: ContentBlockFull }> {
+    return request(`/crm/superadmin/content/${encodeURIComponent(key)}/publish`, { method: 'POST' });
+  },
+  rollbackContentBlock(key: string, version: number): Promise<{ block: ContentBlockFull }> {
+    return request(`/crm/superadmin/content/${encodeURIComponent(key)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    });
+  },
+  createContentBlock(input: {
+    key: string; site: 'marketing' | 'app' | 'shared'; title: string;
+    kind: ContentBlockKind; schema: unknown;
+  }): Promise<{ block: ContentBlockFull }> {
+    return request('/crm/superadmin/content', { method: 'POST', body: JSON.stringify(input) });
+  },
+  deleteContentBlock(key: string): Promise<{ ok: boolean }> {
+    return request(`/crm/superadmin/content/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  },
+  /** Upload a slide image etc.; the returned url is publicly servable once published. */
+  uploadCmsMedia(dataUrl: string): Promise<{ mediaId: string; url: string }> {
+    return request('/crm/superadmin/content/media', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  },
+
+  // ── CMS pages (content:manage) ────────────────────────────────
+  listContentPages(site?: string): Promise<{ pages: ContentPageSummary[] }> {
+    return request(`/crm/superadmin/content/pages${qs({ site })}`);
+  },
+  createContentPage(input: { slug: string; site: 'marketing' | 'app'; title: string }): Promise<{ page: ContentPageFull }> {
+    return request('/crm/superadmin/content/pages', { method: 'POST', body: JSON.stringify(input) });
+  },
+  getContentPage(slug: string): Promise<{ page: ContentPageFull; blocks: ContentBlockFull[]; versions: ContentVersion[] }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}`);
+  },
+  updatePageSections(slug: string, sections: PageSectionRef[]): Promise<{ page: ContentPageFull }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}/sections`, {
+      method: 'PUT',
+      body: JSON.stringify({ sections }),
+    });
+  },
+  renameContentPage(slug: string, title: string): Promise<{ page: ContentPageFull }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+  },
+  publishContentPage(slug: string): Promise<{ page: ContentPageFull }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}/publish`, { method: 'POST' });
+  },
+  rollbackContentPage(slug: string, version: number): Promise<{ page: ContentPageFull }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    });
+  },
+  deleteContentPage(slug: string): Promise<{ ok: boolean }> {
+    return request(`/crm/superadmin/content/pages/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  },
+  /** Public hydration: only published payloads, no auth required. */
+  getPublicContent(site?: string): Promise<{ blocks: Record<string, { data: unknown; publishedAt: string }> }> {
+    return request(`/public/content${qs({ site })}`);
+  },
+  getPublicPages(site?: string): Promise<{ pages: Array<{ slug: string; site: string; title: string | null }> }> {
+    return request(`/public/pages${qs({ site })}`);
+  },
+  getPublicPage(slug: string): Promise<PublicPage> {
+    return request(`/public/pages/${encodeURIComponent(slug)}`);
+  },
 };
+
+/** Absolute path of a CMS media asset on the API host (public content-media route). */
+export function cmsMediaUrl(mediaId: string): string {
+  return `${API_BASE}/public/content-media/${encodeURIComponent(mediaId)}`;
+}

@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { query } from '../../db/pool.js';
-import { effectivePermissions, Permission, type Principal, type Role } from '../../auth/permissions.js';
+import { effectivePermissions, isNationalAdmin, Permission, type Principal, type Role } from '../../auth/permissions.js';
 import { principalSeesWard, STAFF_ROLES } from '../../auth/scope.js';
 import { ApiError } from '../../http/errors.js';
 import { openRecord } from '../../security/encryption.js';
@@ -34,7 +34,7 @@ export async function authorizeReportStaff(id: string, p: Principal, write = fal
   const run = client ? client.query.bind(client) : query;
   const report = (await run(`SELECT id, ward_code, status FROM resident_reports WHERE id=$1${client ? ' FOR UPDATE' : ''}`, [id])).rows[0];
   if (!report) throw ApiError.notFound('Report not found');
-  if (principal.role !== 'national_admin' && (!report.ward_code || !await principalSeesWard(principal, report.ward_code))) {
+  if (!isNationalAdmin(principal.role) && (!report.ward_code || !await principalSeesWard(principal, report.ward_code))) {
     throw ApiError.forbidden('Report is outside your territory');
   }
   return { principal, report };
@@ -48,7 +48,7 @@ export async function eligibleStaff(ward: string | null, ids?: string[], client?
   for (const row of rows) {
     const p = staffPrincipal(row);
     if (p?.permissions?.includes(Permission.REPORT_READ) && p.permissions.includes(Permission.REPORT_WRITE) &&
-        (p.role === 'national_admin' || (ward && await principalSeesWard(p, ward)))) result.push(p);
+        (isNationalAdmin(p.role) || (ward && await principalSeesWard(p, ward)))) result.push(p);
   }
   return result;
 }

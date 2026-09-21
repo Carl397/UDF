@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 import { EmptyState, Icon, ToastProvider, useToast } from '../ui';
 import Logo from '../Logo';
 import { WardFinder } from '../WardTransparency';
+import CmsPage from '../CmsPage';
 import type { Manifesto, Petition } from '../../types';
 
 /**
@@ -69,6 +70,11 @@ function PublicHomeInner() {
       </header>
 
       <main className="pub-body">
+        {/* Published CMS landing page (slider + sections); renders nothing until
+            an admin publishes the `home` page, leaving the static content below
+            as the fallback. */}
+        <CmsPage slug="home" />
+
         {/* Campaign poster */}
         <div className="pub-card" style={{ padding: 0, overflow: 'hidden' }}>
           <img

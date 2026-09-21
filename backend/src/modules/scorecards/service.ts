@@ -2,7 +2,7 @@ import { query, withTransaction } from '../../db/pool.js';
 import { ApiError } from '../../http/errors.js';
 import { isNationalScope, Role, type Principal } from '../../auth/permissions.js';
 import { principalSeesWard, visibleWardCodes } from '../../auth/scope.js';
-import { councillorForWard } from '../transparency/service.js';
+import { councillorForWard, councillorWasFielded } from '../transparency/service.js';
 import { notify } from '../notifications/service.js';
 import type { AcknowledgeBody, HistoryQuery, RollupQuery, SubmitScorecard } from './schemas.js';
 
@@ -165,6 +165,12 @@ export interface CouncillorRef {
 interface Eligibility {
   eligible: boolean;
   reason: IneligibleReason | null;
+  /**
+   * Wording for the card. Usually `INELIGIBLE_MESSAGE[reason]`, but one reason
+   * covers two different situations that must not share a sentence — see the
+   * `vacant_seat` branch of `eligibility`.
+   */
+  message: string | null;
   member: MemberRef | null;
   ward: string | null;
   councillor: CouncillorRef | null;
@@ -178,16 +184,33 @@ interface Eligibility {
  */
 async function eligibility(p: Principal): Promise<Eligibility> {
   const member = await memberForPrincipal(p);
-  if (!member) return { eligible: false, reason: 'no_member', member: null, ward: null, councillor: null };
+  if (!member) return { eligible: false, reason: 'no_member', message: null, member: null, ward: null, councillor: null };
   const ward = member.ward;
-  if (!ward) return { eligible: false, reason: 'no_ward', member, ward: null, councillor: null };
+  if (!ward) return { eligible: false, reason: 'no_ward', message: null, member, ward: null, councillor: null };
   const c = await councillorForWard(ward);
-  if (!c || !c.memberId) return { eligible: false, reason: 'vacant_seat', member, ward, councillor: null };
+  if (!c || !c.memberId) {
+    // "No active councillor right now" only holds for a seat that has been
+    // vacant since the election. In a ward UDF never stood anyone in there is no
+    // councillor coming to inherit a seat, and the card has to say that instead
+    // of inviting the member to wait. Same reason code (the UI needs no new
+    // state), different sentence.
+    const contested = await councillorWasFielded(ward);
+    return {
+      eligible: false,
+      reason: 'vacant_seat',
+      message: contested
+        ? INELIGIBLE_MESSAGE.vacant_seat
+        : 'UDF has no ward councillor in this ward — no UDF candidate was fielded here at the 2026 local elections',
+      member,
+      ward,
+      councillor: null,
+    };
+  }
   const councillor = { memberId: c.memberId, fullName: c.fullName, photoId: c.photoId };
   if (c.memberId === member.memberId) {
-    return { eligible: false, reason: 'self', member, ward, councillor };
+    return { eligible: false, reason: 'self', message: null, member, ward, councillor };
   }
-  return { eligible: true, reason: null, member, ward, councillor };
+  return { eligible: true, reason: null, message: null, member, ward, councillor };
 }
 
 const INELIGIBLE_MESSAGE: Record<IneligibleReason, string> = {
@@ -323,7 +346,7 @@ export async function getCurrent(p: Principal): Promise<CurrentView> {
     return {
       eligible: false,
       reason: el.reason,
-      message: el.reason ? INELIGIBLE_MESSAGE[el.reason] : null,
+      message: el.message ?? (el.reason ? INELIGIBLE_MESSAGE[el.reason] : null),
       ward: el.ward,
       councillor: el.councillor,
       period,
@@ -366,7 +389,7 @@ export async function submit(p: Principal, body: SubmitScorecard): Promise<Score
   }
   const el = await eligibility(p);
   if (!el.eligible || !el.member || !el.ward || !el.councillor) {
-    throw httpError(403, INELIGIBLE_MESSAGE[el.reason ?? 'no_member']);
+    throw httpError(403, el.message ?? INELIGIBLE_MESSAGE[el.reason ?? 'no_member']);
   }
   const { member, ward, councillor } = el;
   const [period, cats] = await Promise.all([currentPeriod(), activeCategories()]);

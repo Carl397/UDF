@@ -1,0 +1,241 @@
+/*
+ * UDF brand styling for Roundcube (Elastic skin).
+ *
+ * Palette is taken from the party's own marketing stylesheet
+ * (website/assets/css/style.css :root) so webmail, the CRM and the public site
+ * read as one brand. Installed by deploy/scripts/brand-webmail.sh.
+ */
+
+:root {
+  --udf-red: #d8261c;
+  --udf-red-deep: #a3170e;
+  --udf-gold: #f7c600;
+  --udf-black: #101010;
+  --udf-ink: #1b1815;
+  --udf-paper: #fbf7f0;
+}
+
+/* ── Login screen ─────────────────────────────────────────────────────────── */
+
+/* Elastic paints this page dark teal (or #21292c in dark mode); use the party's
+   black with a red wash behind the logo instead. */
+body.task-login,
+html.dark-mode body.task-login {
+  background:
+    radial-gradient(1100px 520px at 50% -12%, rgba(216, 38, 28, 0.55), transparent 62%),
+    linear-gradient(180deg, var(--udf-ink) 0%, var(--udf-black) 100%) !important;
+}
+
+/*
+ * Full fit, no cut.
+ *
+ * Two stock rules are what clipped the logo: `#layout` has `overflow:hidden`
+ * with `#layout-content` at `height:100%`, and both `#logo` (`top:16vh`) and
+ * `#login-form` (`top:20vh`) are `position:relative` offsets out of the flow.
+ * A tall logo therefore slid down behind the card and was sliced by it. The
+ * artwork itself is square (the previous asset was a 1600x640 crop, which no
+ * amount of CSS could un-cut), so: put the login area back into normal flow as
+ * a centred column that scrolls if it does not fit, and size the logo from the
+ * viewport height so it can never overflow.
+ *
+ * `justify-content` is declared twice on purpose. Plain `center` is the flex
+ * centring/overflow trap: when the content is taller than the box it splits the
+ * excess above AND below, and overflow above a scroll container is unreachable
+ * (measured live - at a 419px-tall viewport it sliced 54px off the top of the
+ * logo and no scroll position could bring it back). `safe center` keeps the
+ * centring when it fits and stops the top from going negative when it does not;
+ * browsers that do not know `safe center` discard that one declaration and fall
+ * back to the default start alignment, which is also never clipped.
+ */
+.task-login #layout-content {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  justify-content: safe center;
+  height: 100%;
+  overflow-y: auto;
+  padding: 3vh 4vw 4vh;
+  text-align: center;
+}
+
+.task-login #logo {
+  display: block;
+  position: static;
+  top: auto;
+  width: min(200px, 26vh, 62vw);
+  max-width: 100%;
+  max-height: none;
+  height: auto;
+  margin: 0 0 20px;
+  border-radius: 16px;
+  box-shadow: 0 0 0 3px var(--udf-gold), 0 16px 38px rgba(0, 0, 0, 0.55);
+}
+
+html.dark-mode #logo {
+  opacity: 1;
+}
+
+.task-login #login-form {
+  position: static;
+  top: auto;
+  width: min(340px, 92vw);
+  background: var(--udf-paper);
+  border-top: 4px solid var(--udf-red);
+  border-radius: 0 0 14px 14px;
+  padding: 18px 16px 20px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+/*
+ * Brand strip: the `loginfooter` container lives inside the login card, so the
+ * slogan and pillars read as part of the sign-in block rather than a banner.
+ */
+#login-footer {
+  margin-top: 12px;
+}
+
+.udf-brand-strip {
+  border-top: 1px solid rgba(27, 24, 21, 0.15);
+  padding-top: 10px;
+}
+
+.udf-brand-line {
+  margin: 0 0 10px;
+  color: var(--udf-red-deep);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.udf-brand-pillars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.udf-brand-pillars li {
+  border: 1px solid rgba(163, 23, 14, 0.35);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--udf-ink);
+  font-size: 0.6rem;
+  line-height: 1.5;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.task-login #login-form .form-control,
+.task-login #login-form input[type="text"],
+.task-login #login-form input[type="password"] {
+  background-color: #fff;
+  border: 1px solid rgba(27, 24, 21, 0.25);
+  color: var(--udf-ink);
+}
+
+.task-login #login-form label,
+.task-login #login-form .form-text {
+  color: var(--udf-ink);
+}
+
+/* ── Buttons and focus, whole UI ──────────────────────────────────────────── */
+
+input.mainaction,
+button.mainaction,
+a.mainaction,
+.btn-primary,
+#login-form .button {
+  background-color: var(--udf-red) !important;
+  border-color: var(--udf-red-deep) !important;
+  color: #fff !important;
+}
+
+input.mainaction:hover,
+button.mainaction:hover,
+a.mainaction:hover,
+.btn-primary:hover,
+#login-form .button:hover {
+  background-color: var(--udf-red-deep) !important;
+  border-color: var(--udf-red-deep) !important;
+}
+
+.form-control:focus,
+.custom-select:focus,
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="search"]:focus {
+  border-color: var(--udf-red) !important;
+  box-shadow: 0 0 0 0.15rem rgba(247, 198, 0, 0.65) !important;
+}
+
+/* ── Selected / active states ─────────────────────────────────────────────── */
+
+#taskmenu a.active,
+#layout-menu .menu a.selected,
+#sidebar .listing li.selected,
+ul.contactlist li.selected,
+.table-listing tbody tr.selected {
+  background-color: rgba(216, 38, 28, 0.14) !important;
+}
+
+/* ── Post-login chrome (every task except the login screen) ─────────────── */
+
+/*
+ * After sign-in the Elastic skin shows a header bar (`#header`) with the logo
+ * and the task icons (`#taskbar`), a folder/menu rail (`#sidebar` / `#menu`) and
+ * the message list. The login styling above is scoped to `.task-login`, so
+ * without these rules the signed-in UI reverts to the stock teal Elastic look.
+ * These target the skin's own structural ids, so they survive a version bump
+ * the same way the plugin does (nothing in skins/ is edited).
+ */
+body:not(.task-login) #header,
+html.dark-mode body:not(.task-login) #header {
+  background: linear-gradient(180deg, var(--udf-ink) 0%, var(--udf-black) 100%) !important;
+  border-bottom: 3px solid var(--udf-red) !important;
+}
+
+/* Header text + task icons read light on the dark band; hover goes to the brand red. */
+body:not(.task-login) #header,
+body:not(.task-login) #header .toolbar a,
+body:not(.task-login) #taskbar a {
+  color: var(--udf-paper) !important;
+}
+
+#taskbar a:hover,
+#taskbar a.selected {
+  color: var(--udf-gold) !important;
+  border-bottom-color: var(--udf-red) !important;
+}
+
+/* The header logo on signed-in pages (the big login treatment is separate). */
+body:not(.task-login) #logo img,
+body:not(.task-login) img#logo {
+  max-height: 34px;
+  width: auto;
+  border-radius: 6px;
+}
+
+/* Folder + menu rail: brand the active/selected folder and the hover so the
+   navigation column is visibly part of the party UI, not stock Elastic. */
+#sidebar .listing li a:hover,
+#layout-menu .menu a:hover {
+  background-color: rgba(216, 38, 28, 0.1) !important;
+}
+
+#sidebar .listing li.selected > a,
+#layout-menu .menu a.selected {
+  color: var(--udf-red-deep) !important;
+  box-shadow: inset 3px 0 0 var(--udf-red);
+}
+
+/* Unread messages and list headers pick up the deep red rather than stock blue. */
+table.messages thead tr th,
+.listing tbody td.subject .subject.unseen,
+.listing li.unseen > a {
+  color: var(--udf-red-deep) !important;
+}

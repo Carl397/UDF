@@ -14,7 +14,7 @@ import { logger } from '../../config/logger.js';
 import { recordAudit } from '../../security/audit.js';
 import { openRecord } from '../../security/encryption.js';
 import { notify } from '../notifications/service.js';
-import { Permission, type Principal } from '../../auth/permissions.js';
+import { Permission, isNationalAdmin, type Principal } from '../../auth/permissions.js';
 import { principalSeesWard, wardCodeScope } from '../../auth/scope.js';
 import type { CreateResidentReport, CreateTransparencyRating, UpdateResidentReport, UploadMedia, WardLookupQuery } from './schemas.js';
 
@@ -48,6 +48,13 @@ export interface WardOverview {
   ward: WardRef;
   councillor: CouncillorRef | null;
   vacant: boolean;
+  /**
+   * Did UDF stand a candidate in this ward at LGE2026? Read together with
+   * `vacant` it is what lets the app tell "this seat is empty right now" apart
+   * from "this ward was never ours to represent", which are different facts and
+   * deserve different sentences. See `councillorWasFielded`.
+   */
+  contested: boolean;
   patrols30d: number;
   patrols90d: number;
   casesActive: number;
@@ -160,6 +167,60 @@ export async function reverseGeocode(q: WardLookupQuery): Promise<ReverseGeocode
   };
 }
 
+/**
+ * Was this ward contested by UDF at LGE2026 — i.e. does a councillor account
+ * exist for it, active or not?
+ *
+ * Councillor accounts were created from the certified IEC candidate list, one
+ * per ward the party stood someone in, so the existence of an account IS the
+ * record of having stood. The point of asking it separately from
+ * `councillorForWard` is that a vacant seat has two very different causes: the
+ * party ran someone there and the seat is currently empty (they stepped down,
+ * their account was deactivated, their profile was unpublished) versus the
+ * party fielded nobody at all. Wards 61 and 66 are the second case — the
+ * certified list carries no UDF candidate for either — and describing those as
+ * "vacant" would imply a seat waiting to be filled that nobody ever won.
+ *
+ * `is_active` is deliberately NOT filtered: a deactivated account still proves
+ * the ward was contested.
+ */
+export async function councillorWasFielded(wardCode: string): Promise<boolean> {
+  return (await wardsWereFielded([wardCode])).has(wardCode);
+}
+
+/**
+ * Batch form of `councillorWasFielded`, for the map's ward lists — one query per
+ * drill-down instead of one per ward.
+ *
+ * Returns the set of INPUT codes that have a councillor account attached, which
+ * means a code that was never passed in can never come back. A ward is matched
+ * on its primary `ward_code` or on any entry of the multi-ward list, exactly as
+ * `councillorForWard` matches public leaders — and the primary is APPENDED to
+ * the list rather than trusted to be inside it, because it is the FK-backed
+ * source of truth and an account whose list somehow lost its own primary must
+ * still make that ward count as contested. The DISTINCT absorbs the duplicate
+ * when the list already holds it.
+ */
+export async function wardsWereFielded(
+  wardCodes: readonly string[],
+): Promise<Set<string>> {
+  if (wardCodes.length === 0) return new Set();
+  const res = await query<{ ward_code: string }>(
+    `SELECT DISTINCT w.ward_code
+       FROM users u
+       JOIN LATERAL unnest(
+         CASE WHEN u.ward_codes <> '{}'
+              THEN CASE WHEN u.ward_code IS NULL THEN u.ward_codes
+                        ELSE array_append(u.ward_codes, u.ward_code) END
+              ELSE ARRAY[u.ward_code] END
+       ) AS w(ward_code) ON TRUE
+      WHERE u.role = 'ward_councillor'
+        AND w.ward_code = ANY($1::text[])`,
+    [[...wardCodes]],
+  );
+  return new Set(res.rows.map((r) => r.ward_code));
+}
+
 /** Current ward councillor from the public leadership directory. */
 export async function councillorForWard(wardCode: string): Promise<CouncillorRef | null> {
   const res = await query<{
@@ -171,7 +232,7 @@ export async function councillorForWard(wardCode: string): Promise<CouncillorRef
   }>(
     `SELECT l.member_id, l.full_name, l.bio, l.contact_public, l.photo_id
        FROM leaders l LEFT JOIN users u ON u.id = l.user_id
-      WHERE l.ward_code = $1 AND l.is_public
+      WHERE (l.ward_code = $1 OR $1 = ANY(l.ward_codes)) AND l.is_public
         AND (l.user_id IS NULL OR (u.is_active AND u.role = 'ward_councillor' AND u.ward_code = l.ward_code))
       ORDER BY (l.user_id IS NOT NULL) DESC,
         EXISTS (SELECT 1 FROM ward_profiles wp WHERE wp.ward_code = $1 AND wp.councillor_member_id = l.member_id) DESC,
@@ -199,6 +260,10 @@ export async function getOverview(wardCode: string): Promise<WardOverview | null
   if (!ward.rows[0]) return null;
 
   const councillor = await councillorForWard(wardCode);
+  // A councillor in post answers the question already: the seat exists and is
+  // filled, so it was contested. Only an empty one has to be traced back to the
+  // candidate list to say honestly WHY it is empty.
+  const contested = councillor ? true : await councillorWasFielded(wardCode);
 
   const counts = await query<{
     patrols30: string; patrols90: string;
@@ -246,6 +311,7 @@ export async function getOverview(wardCode: string): Promise<WardOverview | null
     ward: ward.rows[0],
     councillor,
     vacant: !councillor,
+    contested,
     patrols30d: Number(c?.patrols30 ?? 0),
     patrols90d: Number(c?.patrols90 ?? 0),
     casesActive: Number(c?.cases_active ?? 0),
@@ -454,13 +520,16 @@ const EXT_BY_TYPE: Record<string, string> = {
   'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
   'audio/m4a': '.m4a', 'audio/mp4': '.m4a', 'audio/ogg': '.ogg', 'audio/webm': '.webm',
   'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/aac': '.aac',
+  'application/pdf': '.pdf',
 };
 
 /** Councillor/staff capture upload: base64 data-url -> disk + media_assets row. */
 export async function uploadMedia(input: UploadMedia, principal: Principal, client?: PoolClient, purpose: 'attachment' | 'profile' = 'attachment') {
   const run = client ? client.query.bind(client) as typeof query : query;
   const { contentType, buffer: buf, kind } = parseCapturedMedia(input.dataUrl, input.captureMode);
-  if (purpose === 'attachment') {
+  if (purpose === 'attachment' && kind !== 'document') {
+    // Documents (PDF attachments) are not a capture type; the photo/video/voice
+    // toggles do not apply to them.
     const policy = await getMediaPolicy();
     if (!policy[kind]) throw ApiError.forbidden(`${kind} attachments are disabled by the administrator`);
   }
@@ -534,7 +603,7 @@ export async function loadMediaForPrincipal(mediaId: string, principal: Principa
        FROM patrol_stops ps JOIN patrols pt ON pt.id = ps.patrol_id WHERE ps.photo_id = $1`,
     [mediaId],
   );
-  const staff = ['national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'].includes(principal.role);
+  const staff = ['superadmin', 'national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'].includes(principal.role);
   for (const row of link.rows) {
     const owner = row.owner_user_id === principal.sub;
     const ownerCanRead = owner && row.permission === Permission.REPORT_READ && principal.permissions?.includes(Permission.REPORT_WRITE);
@@ -543,11 +612,11 @@ export async function loadMediaForPrincipal(mediaId: string, principal: Principa
     }
     if (owner) continue;
     if (row.visibility === 'private' && !staff) throw ApiError.forbidden('Media is private');
-    if (row.visibility !== 'public' && !(principal.role === 'national_admin' || (row.ward_code && await principalSeesWard(principal, row.ward_code)))) {
+    if (row.visibility !== 'public' && !(isNationalAdmin(principal.role) || (row.ward_code && await principalSeesWard(principal, row.ward_code)))) {
       throw ApiError.forbidden('Media belongs to another ward');
     }
   }
-  if (!link.rows.length && asset.rows[0].created_by !== principal.sub && principal.role !== 'national_admin') {
+  if (!link.rows.length && asset.rows[0].created_by !== principal.sub && !isNationalAdmin(principal.role)) {
     const published = await query('SELECT id FROM leaders WHERE photo_id = $1 AND is_public', [mediaId]);
     if (!published.rows.length) throw ApiError.forbidden('Unpublished media is private to its uploader');
   }
@@ -557,7 +626,7 @@ export async function loadMediaForPrincipal(mediaId: string, principal: Principa
 }
 
 // ── Resident → ward councillor reports ────────────────────────────────────
-const STAFF_ROLES = ['national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'];
+const STAFF_ROLES = ['superadmin', 'national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'];
 
 export interface ResidentReportMedia {
   mediaId: string;
@@ -759,7 +828,7 @@ export async function getResidentReport(
   // local_coordinator scoped to one branch ward could open every resident
   // report in the country — including reports from residents who sent
   // information to a different councillor in confidence.
-  const inTerritory = principal.role === 'national_admin' || (!!r.ward_code && (await principalSeesWard(principal, r.ward_code)));
+  const inTerritory = isNationalAdmin(principal.role) || (!!r.ward_code && (await principalSeesWard(principal, r.ward_code)));
   if (!isOwner && !(staff && inTerritory)) {
     throw ApiError.forbidden('You do not have access to this report');
   }

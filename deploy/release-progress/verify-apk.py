@@ -156,9 +156,88 @@ def verify_release():
     print('Device/runtime testing and Play Console upload were not performed.')
 
 
+def verify_current():
+    """Read-only verification of both September release APKs and web bundles."""
+    global APK, TOOLS
+    import tarfile
+    TOOLS = Path('/Users/why/Library/Android/sdk/build-tools/36.0.0')
+    signer = '0744136ba322327792b70495877024a9238e08e218418ea939577a4adb66d797'
+    for directory, app_id, code, version in (
+            ('frontend', 'com.udf.party', 6, '1.0.5'),
+            ('mailapp', 'com.udf.mail', 1, '1.0.0')):
+        APK = ROOT / directory / 'android/app/build/outputs/apk/release/app-release.apk'
+        info = inspect()
+        if (info['applicationId'], info['versionCode'], info['versionName'], info['debuggable']) != (
+                app_id, code, version, False):
+            raise RuntimeError('Unexpected release identity')
+        if info['signerCertificateSha256'] != [signer]:
+            raise RuntimeError('Unexpected release signer')
+        badging = command(str(TOOLS / 'aapt'), 'dump', 'badging', str(APK))
+        if "targetSdkVersion:'36'" not in badging:
+            raise RuntimeError('Unexpected target SDK')
+        manifest = command(str(TOOLS / 'aapt'), 'dump', 'xmltree', str(APK), 'AndroidManifest.xml')
+        if not re.search(r'android:allowBackup[^\n]*=\(type 0x12\)0x0', manifest):
+            raise RuntimeError('Backup must be explicitly disabled')
+        command(str(TOOLS / 'zipalign'), '-c', '-P', '16', '4', str(APK))
+        with zipfile.ZipFile(APK) as archive:
+            if archive.testzip():
+                raise RuntimeError('Corrupt APK')
+            names = archive.namelist()
+            if any(name.endswith(('.key', '.p12', '.jks', '.keystore', 'keystore.properties'))
+                   or '/.env' in name for name in names):
+                raise RuntimeError('Unexpected secret-like packaged file')
+            config = json.loads(archive.read('assets/capacitor.config.json'))
+            if config.get('appId') != app_id or config.get('android', {}).get('webContentsDebuggingEnabled'):
+                raise RuntimeError('Unexpected WebView configuration')
+            if directory == 'mailapp':
+                if config.get('server') != {'url': 'https://mail.udf-party.co.za',
+                                           'androidScheme': 'https', 'allowNavigation': []}:
+                    raise RuntimeError('Mail remote URL/navigation mismatch')
+                permissions = re.findall(r"uses-permission: name='([^']+)'", badging)
+                if set(permissions) != {'android.permission.INTERNET',
+                                       'com.udf.mail.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'}:
+                    raise RuntimeError('Unexpected Mail permission')
+            else:
+                if config.get('server', {}).get('url'):
+                    raise RuntimeError('Party app must bundle local assets')
+                scripts = b'\n'.join(archive.read(name) for name in names
+                                     if name.startswith('assets/public/_next/') and name.endswith('.js'))
+                for marker in (API, b'following your location', b'No UDF candidate at LGE2026'):
+                    if marker not in scripts:
+                        raise RuntimeError('Party release content marker missing')
+        info.pop('signatureWarnings')
+        print(json.dumps(info, sort_keys=True))
+    for name in ('udf-backend.tar.gz', 'udf-frontend.tar.gz'):
+        path = ROOT / 'deploy/.artifacts' / name
+        with tarfile.open(path) as archive:
+            entries = archive.getmembers()
+            if any(entry.issym() or entry.islnk() or entry.name.startswith('/')
+                   or '..' in Path(entry.name).parts or any(part.startswith('._')
+                   for part in Path(entry.name).parts) for entry in entries):
+                raise RuntimeError('Unexpected archive path or link')
+            if name == 'udf-backend.tar.gz':
+                lock = json.load(archive.extractfile('backend/package-lock.json'))
+                versions = {key: item['version'] for key, item in lock['packages'].items()
+                            if key.endswith(('/express', '/qs'))}
+                print('Backend runtime dependency versions: ' + json.dumps(versions, sort_keys=True))
+                migrations = [entry.name for entry in entries
+                              if entry.name.startswith('backend/dist/db/migrations/') and entry.name.endswith('.sql')]
+                if len(migrations) != 51:
+                    raise RuntimeError('Expected exactly 51 packaged migrations')
+            else:
+                for entry in entries:
+                    if entry.isfile() and archive.extractfile(entry).read() != (ROOT / 'frontend/out' / entry.name).read_bytes():
+                        raise RuntimeError('Frontend archive differs from export')
+        print(f'PASS {name}: sha256={sha(path.read_bytes())} bytes={path.stat().st_size}')
+    print('Static checks only; device installation, HTTP and authenticated mail tests are separate.')
+
+
 mode = sys.argv[1] if len(sys.argv) == 2 else ''
-if mode not in ('baseline', 'verify', 'release'):
-    raise SystemExit('Usage: python3 deploy/release-progress/verify-apk.py baseline|verify|release')
+if mode not in ('baseline', 'verify', 'release', 'current'):
+    raise SystemExit('Usage: python3 deploy/release-progress/verify-apk.py baseline|verify|release|current')
+if mode == 'current':
+    verify_current()
+    raise SystemExit(0)
 if mode == 'release':
     APK = ROOT / 'frontend/android/app/build/outputs/apk/release/app-release.apk'
     verify_release()

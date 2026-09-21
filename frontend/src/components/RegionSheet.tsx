@@ -243,7 +243,15 @@ export default function RegionSheet({
               {data.ward.vacant || !data.ward.councillor ? (
                 <div className="banner">
                   <Icon name="flag" size={16} />
-                  <span>This seat is currently vacant. Watch ward bulletins for updates.</span>
+                  {/* "Vacant" and "never contested" are different facts: one is a
+                      seat waiting for a person, the other is a ward the party did
+                      not stand a candidate in at LGE2026. Saying the first about
+                      the second would promise a fill that cannot happen. */}
+                  <span>
+                    {data.ward.contested === false
+                      ? 'UDF did not field a candidate in this ward at the 2026 local elections, so there is no ward councillor here. Your regional leadership represents the ward in the meantime.'
+                      : 'This seat is currently vacant. Watch ward bulletins for updates.'}
+                  </span>
                 </div>
               ) : (
                 <div className="card" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -381,7 +389,13 @@ export default function RegionSheet({
                         {c.name}
                       </span>
                       <span className="row-sub tiny">
-                        {c.councillor ? c.councillor.fullName : c.level === 'ward' ? 'Seat vacant' : c.code}
+                        {c.councillor
+                          ? c.councillor.fullName
+                          : c.level !== 'ward'
+                            ? c.code
+                            : c.contested === false
+                              ? 'No UDF candidate at LGE2026'
+                              : 'Seat vacant'}
                       </span>
                     </span>
                     <Icon name="chev" size={16} />

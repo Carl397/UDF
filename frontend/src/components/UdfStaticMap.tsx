@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import mapData from '../lib/udfMapData.json';
 import { api } from '../lib/api';
-import { mixWhite, prettyRegion, regionColor, wardColorForCode } from '../lib/taxonomy';
+import { mixWhite, prettyRegion, regionColor, SUBCOUNCIL_COLORS, wardColorForCode } from '../lib/taxonomy';
 import type { AreaCaseStats, CaseStats, HeatmapPoint } from '../types';
 
 /**
@@ -79,6 +79,17 @@ const SUBURBS_BY_WARD = ((): Map<string, StaticShape[]> => {
   }
   return byWard;
 })();
+
+/**
+ * Subcouncil code → its index in code order, so the subcouncil layer cycles
+ * SUBCOUNCIL_COLORS by sorted code and neighbouring subcouncils (consecutive
+ * codes) land on consecutive — maximally different — palette entries.
+ */
+const SUBCOUNCIL_INDEX = new Map(
+  [...DATA.layers.subcouncil]
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map((s, i) => [s.code, i] as const),
+);
 
 /** Subcouncil code → its region code, so a ward can name its region in one hop. */
 const REGION_OF_SUBCOUNCIL = new Map(
@@ -299,13 +310,25 @@ function contains(shape: StaticShape, lon: number, lat: number): boolean {
   return inside;
 }
 
-/** Colour for a shape, per layer, from the app's shared palette. */
+/**
+ * Colour for a shape, per layer, from the app's shared palette.
+ *
+ * Every layer is a saturated, distinct mosaic rather than a pale wash: a region
+ * takes its fixed region colour, a subcouncil cycles SUBCOUNCIL_COLORS by sorted
+ * code so neighbouring subcouncils differ, and a ward takes its own hashed
+ * WARD_PALETTE colour so the full-city ward view spreads across the whole
+ * palette. The white mix is kept low so the hues read as colour; the label's
+ * white halo keeps the numbers legible on top.
+ */
 function fillOf(layer: Layer, shape: StaticShape): string {
-  if (layer === 'region') return mixWhite(regionColor(shape.code), 0.45);
+  if (layer === 'region') return mixWhite(regionColor(shape.code), 0.25);
   if (layer === 'subcouncil') {
-    return mixWhite(regionColor(shape.parentCode ?? shape.code), 0.6);
+    return mixWhite(
+      SUBCOUNCIL_COLORS[(SUBCOUNCIL_INDEX.get(shape.code) ?? 0) % SUBCOUNCIL_COLORS.length]!,
+      0.35,
+    );
   }
-  return mixWhite(wardColorForCode(shape.code), 0.35);
+  return mixWhite(wardColorForCode(shape.code), 0.25);
 }
 
 /**
@@ -342,6 +365,16 @@ const BARS: { key: 'open' | 'resolved' | 'followUps'; label: string; tone: strin
 ];
 
 const ZERO_STATS: AreaCaseStats = { code: '', open: 0, resolved: 0, followUps: 0 };
+
+/**
+ * How much air to leave when the map frames the area the reader is standing in.
+ *
+ * Keyed by layer, because "zoom to where I am" means a different thing at each
+ * level: a ward should fill the frame, a region already covers the whole metro
+ * and needs almost none before `clampView` stops it anyway. `fitBox` multiplies
+ * the shape's own box, so smaller = tighter.
+ */
+const LOCATE_FIT: Record<Layer, number> = { ward: 1.35, subcouncil: 1.25, region: 1.1 };
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -394,7 +427,17 @@ export default function UdfStaticMap({
   const pinchRef = useRef(0);
   const movedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
-  const zoomedToFixRef = useRef(false);
+
+  /**
+   * Follow-me mode: armed by the ◎ button, disarmed by a tap on a shape or a
+   * reset. While it is armed the readout and the bars track the reader's own
+   * location rather than whatever was last tapped — see the effect below.
+   */
+  const [followMe, setFollowMe] = useState(false);
+  /** The latest fix, so a second ◎ press can re-frame without a new GPS read. */
+  const lastFixRef = useRef<Fix | null>(null);
+  /** Which area the last ◎-driven fly-to framed, so drift ticks don't re-yank. */
+  const framedRef = useRef<string | null>(null);
 
   /**
    * Case counts for the whole map, fetched once.
@@ -548,6 +591,48 @@ export default function UdfStaticMap({
     return rows;
   }, [focus, layer, wardHere, suburbHere]);
 
+  // ── Follow-me ──────────────────────────────────────────────────────────────
+
+  /**
+   * Select and frame the area of the CURRENT layer that contains `at`, so the
+   * readout, the place rows and the bars all start describing where the reader
+   * actually is. Called from the effect below (a new fix, a layer switch, or a
+   * drift across a boundary) and directly on a repeat ◎ press, where no new fix
+   * may ever arrive for the effect to react to.
+   */
+  function frameLocation(at: Fix): void {
+    const shape = DATA.layers[layer].find((s) => contains(s, at.lon, at.lat)) ?? null;
+    if (!shape) {
+      // Nothing to follow at this level: fall back to the whole layer's totals
+      // rather than leaving a stale ward in the readout, and let the status line
+      // say why (outside the mapped area, or not inside a mapped shape).
+      setSelected(null);
+      framedRef.current = null;
+      return;
+    }
+    setSelected(shape.code);
+    // Fly only when the framed area actually changes: a fix drifts about once a
+    // second, and re-animating on every tick would fight any pan the reader does.
+    if (framedRef.current === shape.code) return;
+    framedRef.current = shape.code;
+    animateTo(fitBox(boxOf(shape), LOCATE_FIT[layer]));
+  }
+
+  /**
+   * While follow-me is armed the map keeps describing the reader's own area.
+   *
+   * Before this the ◎ button moved the viewport and nothing else: `focus` (and
+   * so the place table and the case bars below the map) preferred the last
+   * tapped shape, and on the member map that is always their own ward, which the
+   * `wardCode` effect selects on load. So the map flew to where the reader was
+   * and the data underneath kept describing somewhere else.
+   */
+  useEffect(() => {
+    if (!followMe || !fix) return;
+    frameLocation(fix);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followMe, fix, layer, shapes]);
+
   /** Is the fix even on this map? */
   const fixOnMap =
     fix !== null &&
@@ -692,7 +777,17 @@ export default function UdfStaticMap({
       setGeoError('This device has no location service.');
       return;
     }
-    if (watchRef.current !== null) return;
+    // Arming follow-me is what makes a second press mean something. If a watch is
+    // already open the GPS keeps reporting by itself, so this press only has to
+    // re-frame on the last fix — which it must do explicitly, because the follow
+    // effect only runs when the fix or the layer actually changes.
+    setFollowMe(true);
+    framedRef.current = null;
+    if (watchRef.current !== null) {
+      const seen = lastFixRef.current;
+      if (seen) frameLocation(seen);
+      return;
+    }
 
     setLocating(true);
     setGeoError(null);
@@ -701,20 +796,21 @@ export default function UdfStaticMap({
         setLocating(false);
         const lon = pos.coords.longitude;
         const lat = pos.coords.latitude;
-        setFix({ lon, lat, accuracy: pos.coords.accuracy });
-        // Fly to the fix the first time only, so a later drift tick doesn't
-        // yank a viewport the reader has since panned somewhere on purpose.
-        const within = lon >= MIN_LON && lon <= MAX_LON && lat >= MIN_LAT && lat <= MAX_LAT;
-        if (within && !zoomedToFixRef.current) {
-          zoomedToFixRef.current = true;
-          const [mx, my] = project(lon, lat);
-          const w = VIEW_W * 0.22;
-          const h = w / MAP_ASPECT;
-          animateTo(clampView({ x: mx - w / 2, y: my - h / 2, w, h }));
-        }
+        const next: Fix = { lon, lat, accuracy: pos.coords.accuracy };
+        setFix(next);
+        // The viewport is deliberately NOT flown from here. Framing the fix is
+        // `frameLocation`'s job, because it is the only place that knows which
+        // layer is on screen: the fixed 22%-width box this used to jump to
+        // ignored the layer switch entirely and left the readout below on the
+        // previously tapped area.
+        lastFixRef.current = next;
       },
       (err) => {
         setLocating(false);
+        // Nothing to follow if there is no fix, so leave the mode rather than
+        // hold the button in its pressed state over a map that stayed put.
+        setFollowMe(false);
+        framedRef.current = null;
         // Distinguish refusal from failure: "denied" needs a settings change,
         // the others are worth retrying, and a single generic message would
         // send half the readers to the wrong remedy.
@@ -738,6 +834,10 @@ export default function UdfStaticMap({
     // A drag that ended on this shape is not a tap — don't hijack it into a
     // selection, and don't fly the viewport out from under the pan.
     if (movedRef.current) return;
+    // A deliberate tap outranks the GPS: leave follow-me, so drift ticks stop
+    // pulling the map back to where the reader is standing.
+    setFollowMe(false);
+    framedRef.current = shape.code;
     setSelected(shape.code);
     animateTo(fitBox(box, 1.6));
     onSelect?.({ layer, code: shape.code, name: labelOf(layer, shape), geography: geographyLabel(layer, shape) });
@@ -747,6 +847,17 @@ export default function UdfStaticMap({
 
   /** Tallest bar, so the other two are drawn in proportion to it. */
   const peak = Math.max(focusStats.open, focusStats.resolved, focusStats.followUps);
+
+  /**
+   * Label zoom factor. The font is set in view-units and the viewBox maps view.w
+   * units onto the frame's FIXED pixel width, so a plain `view.w * k` font holds
+   * the SAME screen size at every zoom — which reads as the ward/subcouncil
+   * numbers SHRINKING next to the geography that magnifies around them. Scaling
+   * by sqrt(zoom) makes the numbers GROW as the reader zooms in, clamped so a
+   * label never balloons past the shape it sits in. At rest (zoom 1) it is 1, so
+   * the fully-zoomed-out map is unchanged.
+   */
+  const labelZoom = Math.min(Math.max(Math.sqrt(VIEW_W / view.w), 1), 3.2);
 
   return (
     <div className="udf-map">
@@ -761,6 +872,7 @@ export default function UdfStaticMap({
             onClick={() => {
               setLayer(l.id);
               setSelected(null);
+              framedRef.current = null;
               stopAnim();
               setView(FULL_VIEW);
             }}
@@ -773,7 +885,14 @@ export default function UdfStaticMap({
       <div
         className="udf-map-frame"
         ref={frameRef}
-        style={{ aspectRatio: `${VIEW_W} / ${VIEW_H.toFixed(1)}` }}
+        style={{
+          aspectRatio: `${VIEW_W} / ${VIEW_H.toFixed(1)}`,
+          // Handed to CSS as a number: the frame's width is capped by how tall a
+          // box the viewport can afford, times the map's own aspect (see
+          // `.udf-map-frame` in globals.css). Hard-coding 0.66 there would drift
+          // the moment the boundary asset is re-baked with a different bbox.
+          ['--udf-map-aspect' as string]: MAP_ASPECT.toFixed(4),
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endPointer}
@@ -818,8 +937,8 @@ export default function UdfStaticMap({
             {paths.map(({ shape, box }) => {
               if (box.w / view.w < (layer === 'region' ? 0.15 : 0.055) || box.h / view.h < 0.025) return null;
               return <text key={shape.code} x={box.x + box.w / 2} y={box.y + box.h / 2}
-                textAnchor="middle" dominantBaseline="middle" fontSize={view.w * 0.019}
-                fontWeight={700} fill="#17202a" stroke="#fff" strokeWidth={view.w * 0.003}
+                textAnchor="middle" dominantBaseline="middle" fontSize={view.w * 0.019 * labelZoom}
+                fontWeight={700} fill="#17202a" stroke="#fff" strokeWidth={view.w * 0.003 * labelZoom}
                 paintOrder="stroke">{labelOf(layer, shape)}</text>;
             })}
           </g>
@@ -874,7 +993,14 @@ export default function UdfStaticMap({
             <button
               type="button"
               className="udf-map-reset"
-              onClick={() => animateTo(FULL_VIEW)}
+              onClick={() => {
+                // A reset is "show me the whole map", so it ends follow-me —
+                // otherwise the next drift tick frames the reader's ward again
+                // under a viewport they just asked to pull back.
+                setFollowMe(false);
+                framedRef.current = null;
+                animateTo(FULL_VIEW);
+              }}
               aria-label="Reset map view"
             >
               ⤢
@@ -882,10 +1008,11 @@ export default function UdfStaticMap({
           )}
           <button
             type="button"
-            className="udf-map-locate"
+            className={`udf-map-locate${followMe ? ' on' : ''}`}
             onClick={startLocate}
             disabled={locating}
             aria-label="Show my location"
+            aria-pressed={followMe}
           >
             {locating ? '…' : '◎'}
           </button>
@@ -899,6 +1026,7 @@ export default function UdfStaticMap({
         ) : here ? (
           <span>
             You are in <strong>{labelOf(layer, here)}</strong>
+            {followMe && <span className="udf-map-status-follow"> · following your location</span>}
           </span>
         ) : fix && !fixOnMap ? (
           <span>You are outside the mapped area.</span>

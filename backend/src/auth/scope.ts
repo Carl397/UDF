@@ -247,6 +247,7 @@ export async function placeScope(
  * an analyst sees aggregates only.
  */
 export const STAFF_ROLES: ReadonlySet<Role> = new Set<Role>([
+  Role.SUPERADMIN,
   Role.NATIONAL_ADMIN,
   Role.REGIONAL_ORGANIZER,
   Role.LOCAL_COORDINATOR,

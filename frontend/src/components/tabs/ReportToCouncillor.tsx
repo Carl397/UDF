@@ -178,8 +178,11 @@ export default function ReportToCouncillor() {
         </button>
 
         <p className="hint-text" style={{ marginTop: 10 }}>
-          Private to you and your ward&apos;s staff. Attachments are stored with a tamper-evident hash;
-          your location is used only to route the report to the right ward and is never shown publicly.
+          Private to you and the ward&apos;s staff. Reports are only supported within South Africa.
+          Your location (or, if you skip it, your registered ward) decides which ward&apos;s councillor
+          receives it — so a problem reported at a site in another ward routes to that ward, while you
+          keep getting updates on it here. Attachments are stored with a tamper-evident hash and your
+          location is never shown publicly.
         </p>
         </fieldset>
       </div>

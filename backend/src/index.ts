@@ -3,9 +3,14 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { pool } from './db/pool.js';
+import { startScheduler } from './modules/platform/scheduler.js';
 
 const app = createApp();
 const server = http.createServer(app);
+
+// In-process cron for analytics rollups + housekeeping (records to job_runs, the
+// SuperAdmin "crons" panel reads). Returns a stop() handle for graceful exit.
+const stopScheduler = startScheduler();
 
 server.listen(env.PORT, env.HOST, () => {
   logger.info(
@@ -16,6 +21,7 @@ server.listen(env.PORT, env.HOST, () => {
 
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Shutting down gracefully');
+  stopScheduler();
   server.close(async () => {
     await pool.end().catch(() => undefined);
     process.exit(0);

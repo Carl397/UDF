@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  UDF secure-mail network security config — DEBUG / default variant.
+
+  Unlike the member app, this wrapper never talks to a local http backend: its
+  only destination is https://mail.udf-party.co.za. So even the debug build is
+  HTTPS-ONLY — cleartext is disabled outright and the WebView can never be
+  downgraded to plaintext or tricked into a different origin by a cleartext
+  navigation. Trust anchors are the Android system CA store; the webmail host
+  presents a public Let's Encrypt certificate, which that store validates.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

@@ -22,6 +22,9 @@ const LIMIT = 20;
 
 const labelize = (r: string) => r.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 const parseRegions = (s: string) => s.split(',').map((x: string) => x.trim()).filter(Boolean);
+/** All wards for a user, newest list first, primary ward as fallback. */
+const wardsOf = (u: { wardCode: string | null; wardCodes?: string[] | null }) =>
+  u.wardCodes?.length ? u.wardCodes : (u.wardCode ? [u.wardCode] : []);
 
 /**
  * The permission vocabulary, grouped for editing. The names come from `Perm`
@@ -66,6 +69,8 @@ interface UserShape {
   role: string;
   regionCodes: string[];
   wardCode: string | null;
+  /** Public ward list; wardCode is the primary (first entry). */
+  wardCodes?: string[] | null;
   isActive: boolean;
   createdAt: string;
   permissionGrants: string[];
@@ -124,7 +129,7 @@ export default function CrmUsers() {
       'users',
       ['Email', 'Full Name', 'Title', 'Role', 'Ward', 'Region Scope', 'Added Permissions', 'Removed Permissions', 'Status', 'Created'],
       users.map((u) => [
-        u.email ?? '', u.fullName ?? '', u.title ?? '', u.role, u.wardCode ?? '',
+        u.email ?? '', u.fullName ?? '', u.title ?? '', u.role, wardsOf(u).join('; '),
         u.regionCodes?.length ? u.regionCodes.join('; ') : 'National',
         (u.permissionGrants ?? []).join('; '), (u.permissionRevokes ?? []).join('; '),
         u.isActive ? 'active' : 'disabled', u.createdAt,
@@ -198,7 +203,7 @@ export default function CrmUsers() {
             </span>,
             labelize(u.role),
             <OverrideBadge key="o" grants={u.permissionGrants ?? []} revokes={u.permissionRevokes ?? []} />,
-            u.wardCode ?? '—',
+            wardsOf(u).join(', ') || '—',
             u.regionCodes?.length ? u.regionCodes.join(', ') : 'National',
             <CrmBadge key="s" value={u.isActive ? 'active' : 'inactive'} />,
             fmtDate(u.createdAt),
@@ -275,13 +280,15 @@ function CreateUserModal({ rolePerms, held, onClose, onCreated }: {
     }
     setSaving(true);
     try {
+      const wards = parseRegions(form.wardCode);
       await api.crmCreateUser({
         email: form.email,
         password: form.password,
         role: form.role,
         fullName: form.fullName || undefined,
         regionCodes: parseRegions(form.regionCodes),
-        wardCode: form.wardCode || null,
+        wardCode: wards[0] ?? null,
+        wardCodes: wards,
         permissionGrants: overrides.grants,
         permissionRevokes: overrides.revokes,
         avatarMediaId,
@@ -324,8 +331,8 @@ function CreateUserModal({ rolePerms, held, onClose, onCreated }: {
         <CrmField label="Region Codes (comma-separated, blank = national)">
           <input type="text" value={form.regionCodes} onChange={(e) => setForm({ ...form, regionCodes: e.target.value })} placeholder="e.g. CPT-SC1, CPT-SC2" />
         </CrmField>
-        <CrmField label="Ward Code (optional)">
-          <input type="text" value={form.wardCode} onChange={(e) => setForm({ ...form, wardCode: e.target.value })} placeholder="e.g. CPT-W001" />
+        <CrmField label="Ward Codes (comma-separated, optional)">
+          <input type="text" value={form.wardCode} onChange={(e) => setForm({ ...form, wardCode: e.target.value })} placeholder="e.g. CPT-W001, CPT-W002" />
         </CrmField>
       </div>
 
@@ -365,7 +372,7 @@ function EditUserModal({ user, rolePerms, held, onClose, onSaved }: {
   const [form, setForm] = useState({
     email: user.email ?? '',
     role: user.role,
-    wardCode: user.wardCode ?? '',
+    wardCode: wardsOf(user).join(', '),
     regionCodes: (user.regionCodes ?? []).join(', '),
     isActive: user.isActive ?? true,
     title: user.title ?? '',
@@ -381,10 +388,12 @@ function EditUserModal({ user, rolePerms, held, onClose, onSaved }: {
   const submit = async () => {
     setSaving(true);
     try {
+      const wards = parseRegions(form.wardCode);
       await api.crmUpdateUser(user.id, {
         email: form.email || undefined,
         role: form.role,
-        wardCode: form.wardCode || null,
+        wardCode: wards[0] ?? null,
+        wardCodes: wards,
         regionCodes: parseRegions(form.regionCodes),
         isActive: form.isActive,
         permissionGrants: overrides.grants,
@@ -421,8 +430,8 @@ function EditUserModal({ user, rolePerms, held, onClose, onSaved }: {
         <CrmField label="Region Codes (comma-separated, blank = national)">
           <input type="text" value={form.regionCodes} onChange={(e) => setForm({ ...form, regionCodes: e.target.value })} placeholder="e.g. CPT-SC1, CPT-SC2" />
         </CrmField>
-        <CrmField label="Ward Code">
-          <input type="text" value={form.wardCode} onChange={(e) => setForm({ ...form, wardCode: e.target.value })} placeholder="e.g. CPT-W001" />
+        <CrmField label="Ward Codes (comma-separated — first is primary)">
+          <input type="text" value={form.wardCode} onChange={(e) => setForm({ ...form, wardCode: e.target.value })} placeholder="e.g. CPT-W001, CPT-W002" />
         </CrmField>
         <CrmField label="Status">
           <select value={form.isActive ? 'active' : 'disabled'} onChange={(e) => setForm({ ...form, isActive: e.target.value === 'active' })}>

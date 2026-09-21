@@ -3,6 +3,7 @@ import { verifyAccessToken } from '../auth/tokens.js';
 import { effectivePermissions, modulesForRole, type Role } from '../auth/permissions.js';
 import { query } from '../db/pool.js';
 import { ApiError } from '../http/errors.js';
+import { recordPresence } from '../modules/platform/presence.js';
 
 /**
  * Verify the Bearer access token and attach the Principal to the request.
@@ -83,6 +84,16 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
         (key) => !disabledSet.has(key),
       ),
     };
+    // Presence: a request from a live session marks that session seen (the
+    // SuperAdmin "users live now" tile reads this). Throttled + fire-and-forget
+    // inside recordPresence, so it adds no meaningful latency and cannot fail
+    // the request.
+    const deviceId = req.get('x-device-id');
+    recordPresence(
+      claims.sub,
+      req.ip ?? null,
+      typeof deviceId === 'string' && deviceId.length > 0 ? deviceId.slice(0, 128) : null,
+    );
     next();
   } catch {
     next(ApiError.unauthorized());

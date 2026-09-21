@@ -144,9 +144,12 @@ export async function registerMember(
   });
 
   const emailBidx = blindIndex('email', input.email);
-  const dup = await query<{ id: string }>('SELECT id FROM members WHERE email_bidx = $1', [
-    emailBidx,
-  ]);
+  // Live registrations only: a member soft-deleted for right-to-erasure frees
+  // their email for a fresh signup, matching the partial unique index (039).
+  const dup = await query<{ id: string }>(
+    'SELECT id FROM members WHERE email_bidx = $1 AND deleted_at IS NULL',
+    [emailBidx],
+  );
   if (dup.rows[0]) {
     throw ApiError.conflict('That email is already registered with the party');
   }
@@ -178,6 +181,7 @@ export async function registerMember(
     referredByMemberId = actor.rows[0]?.id ?? null;
   }
 
+  try {
   await withTransaction(async (client) => {
     // Placeholder numbering has to stay contiguous: when the applicant gives no
     // coordinates the lat/lng params are left out entirely, because Postgres
@@ -236,6 +240,15 @@ export async function registerMember(
       ],
     );
   });
+  } catch (err: any) {
+    // The pre-check is not race-proof on its own; the partial unique index (039)
+    // is. Translate a concurrent same-email insert into the same friendly
+    // conflict, rather than surfacing a raw unique-violation 500.
+    if (err?.code === '23505') {
+      throw ApiError.conflict('That email is already registered with the party');
+    }
+    throw err;
+  }
 
   const { confirmUrl } = await issueToken({ memberId: id, kind: 'register', ttlDays: 14 });
 

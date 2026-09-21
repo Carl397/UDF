@@ -5,7 +5,8 @@
   "description": "Enterprise-grade political party platform: members, geo map, heat map, 3-layer encryption.",
   "workspaces": [
     "backend",
-    "frontend"
+    "frontend",
+    "mailapp"
   ],
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
@@ -18,7 +19,8 @@
     "caps:check": "npm run caps:check --workspace frontend",
     "db:up": "docker compose up -d db",
     "db:migrate": "npm run migrate --workspace backend",
-    "db:seed": "npm run seed --workspace backend"
+    "db:seed": "npm run seed --workspace backend",
+    "render:marketing": "npm run render:marketing --workspace backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

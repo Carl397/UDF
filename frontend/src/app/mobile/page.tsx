@@ -1,15 +1,20 @@
 import Image from 'next/image';
 import type { Metadata } from 'next';
 import Logo from '../../components/Logo';
+import ApkDownloadButton from './ApkDownloadButton';
+import { API_BASE } from '../../lib/api';
 import './mobile.css';
 
 export const metadata: Metadata = {
   title: 'UDF Party — Mobile App',
   description:
-    'The official UDF party mobile app: member organizing, live map and heat-map analytics, secured with 3-layer encryption.',
+    'The official UDF party app: follow patrols and engagements, watch true progress in your ward, and rate your councillor — accountability at your fingertips.',
 };
 
-const APK_URL = '/downloads/udf.apk';
+// Counted download: hits the analytics endpoint (logs device/OS/referrer) then
+// 302-redirects to the real APK. A bare static link could never be counted —
+// the app vhost's nginx access log is off (see deploy/RUNBOOK).
+const APK_URL = `${API_BASE}/public/download/apk`;
 
 export default function MobileLandingPage() {
   return (
@@ -21,9 +26,10 @@ export default function MobileLandingPage() {
             <Logo size={34} wordmark={false} />
             <span>UDF PARTY</span>
           </div>
-          <a className="udf-nav-cta" href={APK_URL}>
+          <ApkDownloadButton className="udf-nav-cta" href={APK_URL}>
+            <Image src="/brand/icon-32.png" alt="" width={16} height={16} style={{ borderRadius: 4 }} />
             Get the app
-          </a>
+          </ApkDownloadButton>
         </div>
       </header>
 
@@ -40,27 +46,25 @@ export default function MobileLandingPage() {
               <span className="gold">In your pocket.</span>
             </h1>
             <p className="udf-sub">
-              Organize members, watch your movement grow on a live map and heat
-              map, and keep every record protected with enterprise-grade,
-              3-layer encryption.
+              Everything your ward needs in one secure app — watch the movement
+              grow on a live map and heat map, follow patrols and engagements,
+              and rate the councillors who serve you.
             </p>
             <div className="udf-cta-row">
-              <a className="udf-btn udf-btn-gold" href={APK_URL}>
-                ⬇ Download APK
-              </a>
-              <a className="udf-btn udf-btn-ghost" href="/login">
-                Open web app →
-              </a>
+              <ApkDownloadButton className="udf-btn udf-btn-gold" href={APK_URL}>
+                <Image src="/brand/icon-32.png" alt="" width={22} height={22} style={{ borderRadius: 6 }} />
+                Download UDF Party App
+              </ApkDownloadButton>
             </div>
             <div className="udf-hero-meta">
-              <div>
-                <b>3-layer</b> encryption
-              </div>
               <div>
                 <b>Live</b> map &amp; heat map
               </div>
               <div>
-                <b>100%</b> member-first
+                <b>Patrols</b> &amp; engagements
+              </div>
+              <div>
+                <b>Rate</b> your councillor
               </div>
             </div>
           </div>
@@ -82,36 +86,17 @@ export default function MobileLandingPage() {
         </div>
       </section>
 
-      {/* ── Brand poster band ── */}
-      <section style={{ position: 'relative', height: 'min(46vw, 420px)' }}>
-        <Image
-          src="/brand/udf-illustration.png"
-          alt="UDF brand banner"
-          fill
-          sizes="100vw"
-          style={{ objectFit: 'cover', objectPosition: 'center 30%' }}
-        />
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background:
-              'linear-gradient(180deg, rgba(20,20,20,0) 40%, rgba(20,20,20,0.72) 100%)',
-          }}
-        />
-        <div
-          className="udf-container"
-          style={{
-            position: 'absolute',
-            bottom: 22,
-            left: 0,
-            right: 0,
-            color: '#fff',
-          }}
-        >
-          <strong style={{ fontSize: 'clamp(18px,3vw,26px)', fontWeight: 900 }}>
-            Built for the people, by the people.
-          </strong>
+      {/* ── Brand poster band (whole illustration, fits without crop/zoom) ── */}
+      <section className="udf-poster">
+        <div className="udf-container udf-poster-in">
+          <Image
+            src="/brand/udf-illustration.png"
+            alt="UDF brand illustration: a diverse crowd raising clenched fists beneath the UDF flag"
+            width={1050}
+            height={1050}
+            className="udf-poster-img"
+          />
+          <strong className="udf-poster-cap">Built for the people, by the people.</strong>
         </div>
       </section>
 
@@ -128,7 +113,7 @@ export default function MobileLandingPage() {
             <div className="udf-card">
               <div className="udf-card-icon">🗺️</div>
               <h3>Live Map</h3>
-              <p>See members, volunteers and events across every region on an interactive map.</p>
+              <p>See events across every region on an interactive map.</p>
             </div>
             <div className="udf-card">
               <div className="udf-card-icon">🔥</div>
@@ -136,14 +121,14 @@ export default function MobileLandingPage() {
               <p>Spot momentum instantly — engagement and head-count density at a glance.</p>
             </div>
             <div className="udf-card">
-              <div className="udf-card-icon">👥</div>
-              <h3>Members</h3>
-              <p>Voters, volunteers, donors, candidates and staff — one directory, many tiers.</p>
+              <div className="udf-card-icon">🚑</div>
+              <h3>Patrols</h3>
+              <p>See councillor and volunteer patrols across your ward, week by week — real activity, not promises.</p>
             </div>
             <div className="udf-card">
-              <div className="udf-card-icon">🔐</div>
-              <h3>Encrypted</h3>
-              <p>Field-level encryption keeps personal data sealed — even from insiders.</p>
+              <div className="udf-card-icon">🤝</div>
+              <h3>Engagements</h3>
+              <p>Rallies, clinic days and community meetings — every engagement logged and visible to members.</p>
             </div>
           </div>
         </div>
@@ -182,40 +167,51 @@ export default function MobileLandingPage() {
         </div>
       </section>
 
-      {/* ── Security ── */}
+      {/* ── Accountability (member benefits) ── */}
       <section className="udf-section">
         <div className="udf-container">
-          <span className="udf-kicker">Privacy &amp; security</span>
-          <h2 className="udf-h2">Protected by 3-layer encryption</h2>
+          <span className="udf-kicker">For members</span>
+          <h2 className="udf-h2">Accountability at your fingertips</h2>
           <p className="udf-lead">
-            Your members&apos; trust is the movement&apos;s foundation. We defend it at
-            every layer.
+            Give the community the tools to judge true progress — not promises.
+            Track the people you elected, follow what actually gets delivered,
+            and hold them to account from your phone.
           </p>
-          <div className="udf-sec-list">
-            <div className="udf-sec-item">
-              <span className="udf-sec-num">1</span>
-              <div>
-                <h4>In transit</h4>
-                <p>TLS everywhere, hardened headers and strict transport security.</p>
-              </div>
+          <div className="udf-tools">
+            <div className="udf-tool">
+              <span className="udf-tool-num">1</span>
+              <h4>Patrols &amp; engagements</h4>
+              <p>
+                Short, honest highlights of every patrol and community
+                engagement in your ward — what happened, where and when.
+              </p>
             </div>
-            <div className="udf-sec-item">
-              <span className="udf-sec-num">2</span>
-              <div>
-                <h4>At rest</h4>
-                <p>Encrypted databases and volumes, with TLS to the database itself.</p>
-              </div>
+            <div className="udf-tool">
+              <span className="udf-tool-num">2</span>
+              <h4>Rate your councillor</h4>
+              <p>
+                Service delivered, or an issue ignored? Rate your councillor.
+                Scores are public and feed real performance reviews.
+              </p>
             </div>
-            <div className="udf-sec-item">
-              <span className="udf-sec-num">3</span>
-              <div>
-                <h4>Field-level (E2EE)</h4>
-                <p>Each record sealed with its own key, wrapped by a KMS master key — plus a tamper-evident audit trail.</p>
-              </div>
+            <div className="udf-tool">
+              <span className="udf-tool-num">3</span>
+              <h4>See true progress</h4>
+              <p>
+                Watch promises turn into delivery — housing, water, electricity
+                and safety — with visible progress for your ward.
+              </p>
             </div>
           </div>
 
-          {/* Notification preview card */}
+          <div className="udf-banner">
+            <p>
+              Your voice keeps the movement honest. Every rating, every
+              report — community interests above internal politics.
+            </p>
+          </div>
+
+          {/* Alert preview: what accountability looks like on your phone */}
           <div className="udf-notif">
             <div className="udf-notif-head">
               <Image src="/brand/icon-32.png" alt="" width={28} height={28} style={{ borderRadius: 7 }} />
@@ -228,7 +224,8 @@ export default function MobileLandingPage() {
               <Image src="/brand/notification.png" alt="Push notification big picture" fill sizes="460px" style={{ objectFit: 'cover' }} />
             </div>
             <div className="udf-notif-body">
-              Rally tomorrow, 5pm — Central Region. Tap to see the map.
+              Patrol logged — Ward 96, 6pm. 3 issues captured. Tap to see the
+              map and rate the response.
             </div>
           </div>
         </div>
@@ -240,16 +237,15 @@ export default function MobileLandingPage() {
           <div className="udf-cta-band">
             <h2>Join the movement today</h2>
             <p>
-              Install the UDF app on Android, or open the full web platform from
-              any browser.
+              Install the official UDF app on Android and carry your ward with
+              you — every patrol, engagement and councillor rating, right in
+              your pocket.
             </p>
             <div className="udf-cta-row" style={{ justifyContent: 'center' }}>
-              <a className="udf-btn udf-btn-gold" href={APK_URL}>
-                 Download for Android
-              </a>
-              <a className="udf-btn udf-btn-ghost" href="/login">
-                Sign in on web
-              </a>
+              <ApkDownloadButton className="udf-btn udf-btn-gold" href={APK_URL}>
+                <Image src="/brand/icon-32.png" alt="" width={22} height={22} style={{ borderRadius: 6 }} />
+                Download for Android
+              </ApkDownloadButton>
             </div>
           </div>
         </div>
@@ -259,10 +255,6 @@ export default function MobileLandingPage() {
       <footer className="udf-footer">
         <div className="udf-container udf-footer-inner">
           <span>© {new Date().getFullYear()} UDF Party. All rights reserved.</span>
-          <span>
-            <a href="/mobile">App</a> · <a href="/login">Sign in</a> ·{' '}
-            <a href="/healthz">Status</a>
-          </span>
         </div>
       </footer>
     </div>

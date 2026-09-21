@@ -225,6 +225,7 @@ export interface ApplyModerationActionResult {
  * unintentional.
  */
 export type Role =
+  | 'superadmin'
   | 'national_admin'
   | 'regional_organizer'
   | 'local_coordinator'
@@ -261,8 +262,21 @@ export interface PartyEvent {
   capacity: number | null;
   rsvpCount: number;
   status: EventStatus;
+  /** True when the organiser set a dedicated cover image. */
+  hasCover: boolean;
+  /** Whether the signed-in caller already RSVP'd 'going'. */
+  going: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** One RSVP on an event, as the organiser sees it in the backoffice guest list. */
+export interface EventAttendee {
+  name: string | null;
+  membershipNo: string | null;
+  ward: string | null;
+  response: 'going' | 'interested';
+  at: string;
 }
 
 export type PostKind =
@@ -631,6 +645,52 @@ export interface WardBulletin {
   publishedAt: string;
   createdAt: string;
   updatedAt: string;
+  /** True when a dedicated cover image is set. */
+  hasCover: boolean;
+}
+
+/** A PDF / photo / short-video file or a URL link attached to a bulletin or event. */
+export interface Attachment {
+  id: string;
+  parentType: 'bulletin' | 'event';
+  parentId: string;
+  kind: 'photo' | 'video' | 'document' | 'link';
+  title: string | null;
+  caption: string | null;
+  seq: number;
+  /** Link destination (link kind only). */
+  url: string | null;
+  /** media_assets id (file kinds only); fetch bytes via `attachmentFileBlob`. */
+  mediaId: string | null;
+  contentType: string | null;
+  createdAt: string;
+}
+
+/**
+ * A ward candidate on the public "Meet our ward councillors" roster. Managed in
+ * the CRM by website-content owners and published to the marketing homepage, so
+ * it carries no territory scope.
+ */
+export interface WardCandidate {
+  id: string;
+  fullName: string;
+  /** Optional position label shown under the name (blank by default). */
+  roleLabel: string;
+  /** Ward coverage label, e.g. "39 wards". */
+  wardsLabel: string;
+  bio: string;
+  hasPhoto: boolean;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface WardCandidateInput {
+  fullName: string;
+  roleLabel?: string;
+  wardsLabel?: string;
+  bio?: string;
+  sortOrder?: number;
+  isActive?: boolean;
 }
 
 export interface Participation {
@@ -693,8 +753,31 @@ export interface Patrol {
   mediaCount?: number;
   /** The overview report's attachments, hydrated by `getPatrol` only. */
   media?: ResidentReportMedia[];
+  /**
+   * GPS-derived wards the track passed through, hydrated by `getPatrol` only.
+   * `crossing` marks a ward other than the patrol's own — the patrol walked
+   * over into a neighbour's territory, which is what "live in another ward" is.
+   */
+  wardEntries?: PatrolWardEntry[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** A ward a patrol's GPS track was resolved into, with first/last sighting. */
+export interface PatrolWardEntry {
+  wardCode: string;
+  wardName: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  pointCount: number;
+  crossing: boolean;
+}
+
+/** Response of POST /patrols/:id/track-points — the fix echo + its ward. */
+export interface TrackPointResult {
+  id: string;
+  wardCode: string | null;
+  wardName: string | null;
 }
 
 export interface PatrolStop {
@@ -783,6 +866,14 @@ export interface WardOverview {
   ward: WardRef;
   councillor: CouncillorRef | null;
   vacant: boolean;
+  /**
+   * Did UDF stand a candidate in this ward at LGE2026? `vacant` alone cannot
+   * tell a seat that is waiting to be filled from a ward the party never
+   * contested, and those are two different sentences to put on screen. Read it
+   * with `=== false`, never as a truthy test: a server older than this field
+   * sends nothing, and "unknown" must fall back to the neutral wording.
+   */
+  contested: boolean;
   patrols30d: number;
   patrols90d: number;
   casesActive: number;
@@ -802,6 +893,7 @@ export interface WardLookupResult {
   accurate: boolean;
   councillor: CouncillorRef | null;
   vacant: boolean;
+  contested: boolean;
   overview: WardOverview;
 }
 
@@ -833,6 +925,8 @@ export interface RegionChild {
   level: string;
   members: number;
   councillor: RegionCouncillor | null;
+  /** Ward rows only: was this ward contested by UDF at LGE2026? See WardOverview. */
+  contested: boolean;
 }
 
 /**

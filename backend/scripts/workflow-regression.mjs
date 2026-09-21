@@ -7,8 +7,9 @@ import { createApp } from '../src/app.ts';
 import { signAccessToken } from '../src/auth/tokens.ts';
 import { env } from '../src/config/env.ts';
 import { pool } from '../src/db/pool.ts';
-import { Permission, Role, permissionsForRole, modulesForRole } from '../src/auth/permissions.ts';
+import { Permission, Role, permissionsForRole, modulesForRole, effectivePermissions, PERMISSION_MODULE, ModuleKey } from '../src/auth/permissions.ts';
 import * as reports from '../src/modules/transparency/service.ts';
+import * as content from '../src/modules/content/service.ts';
 import { applyReportAction, reportWorkflowView } from '../src/modules/transparency/reportWorkflow.ts';
 import { reportAccountability, listManagedReports, reportFilterOptions } from '../src/modules/transparency/reportManagement.ts';
 import { listReportTasks, reportAssignees, saveReportTask } from '../src/modules/transparency/reportTasks.ts';
@@ -22,6 +23,7 @@ import { addPatrolStopSchema } from '../src/modules/patrols/schemas.ts';
 import { sealRecord } from '../src/security/encryption.ts';
 import { getRegionSummary } from '../src/modules/geo/service.ts';
 import { regionSummarySchema } from '../src/modules/geo/schemas.ts';
+import { rollupAnalyticsDay, rollupDownloadDay } from '../src/modules/analytics/service.ts';
 
 // All service calls share one rollback-only connection. Nested service
 // transactions become savepoints; no fixture or audit record is committed.
@@ -74,6 +76,7 @@ const peer = p(Role.WARD_COUNCILLOR);
 const outside = p(Role.WARD_COUNCILLOR, outsideWard);
 const admin = p(Role.NATIONAL_ADMIN, null);
 const coordinator = p(Role.LOCAL_COORDINATOR);
+const superadmin = p(Role.SUPERADMIN, null);
 const memberId = randomUUID();
 const actor = { actorId: admin.sub, actorRole: admin.role, permissions: admin.permissions };
 let report;
@@ -84,7 +87,7 @@ try {
   await client.query('BEGIN');
   await client.query("INSERT INTO regions(code,name,level) VALUES ($1,'Regression subcouncil','subcouncil')", [region]);
   await client.query("INSERT INTO regions(code,name,level,parent_code) VALUES ($1,'Ward QA1','ward',$3),($2,'Ward QA2','ward',$3)", [ward, outsideWard, region]);
-  for (const principal of [member, councilor, peer, outside, admin, coordinator]) {
+  for (const principal of [member, councilor, peer, outside, admin, coordinator, superadmin]) {
     const sealed = await sealRecord(principal.sub, { email: `${principal.sub}@example.invalid`, fullName: 'Regression Councilor' });
     await client.query('INSERT INTO users(id,password_hash,role,ward_code,region_codes,sealed_pii) VALUES ($1,$2,$3,$4,$5,$6)',
       [principal.sub, 'not-a-login-hash', principal.role, principal.wardCode, principal.regionCodes, JSON.stringify(sealed)]);
@@ -92,6 +95,168 @@ try {
   await client.query("INSERT INTO members(id,ward,status,tier) VALUES ($1,$2,'active','staff')", [memberId, ward]);
   await client.query('UPDATE users SET member_id=$2 WHERE id=$1', [councilor.sub, memberId]);
   await client.query('UPDATE media_capture_policy SET photo=true,video=true,voice=true WHERE singleton');
+
+  const OPS_TRIO = [Permission.PLATFORM_READ, Permission.ANALYTICS_READ, Permission.CONTENT_MANAGE];
+  await test('superadmin is a strict superset of national_admin and owns the ops trio', () => {
+    const nat = new Set(permissionsForRole(Role.NATIONAL_ADMIN));
+    const sup = new Set(permissionsForRole(Role.SUPERADMIN));
+    for (const perm of nat) assert.ok(sup.has(perm), `superadmin must retain national_admin permission ${perm}`);
+    for (const perm of OPS_TRIO) {
+      assert.ok(sup.has(perm), `superadmin must hold ${perm}`);
+      assert.ok(!nat.has(perm), `national_admin must NOT hold ${perm} (ops surface stays separate)`);
+      assert.equal(PERMISSION_MODULE.get(perm), ModuleKey.SUPERADMIN, `${perm} must be owned by the superadmin module`);
+    }
+  });
+  await test('superadmin module applies only to superadmin and its toggle strips the trio', () => {
+    assert.ok(modulesForRole(Role.SUPERADMIN).includes(ModuleKey.SUPERADMIN));
+    assert.ok(!modulesForRole(Role.NATIONAL_ADMIN).includes(ModuleKey.SUPERADMIN));
+    for (const perm of OPS_TRIO) assert.ok(new Set(effectivePermissions(Role.SUPERADMIN)).has(perm));
+    const disabled = new Set(effectivePermissions(Role.SUPERADMIN, null, null, [ModuleKey.SUPERADMIN]));
+    for (const perm of OPS_TRIO) assert.ok(!disabled.has(perm), `disabling the superadmin module must strip ${perm}`);
+    assert.ok(disabled.has(Permission.MEMBER_READ), 'a disabled ops module must not strip unrelated permissions');
+  });
+
+  // ── CMS: South-Africa report gate + pages/blocks model ───────────────────
+  await test('resident-report schema rejects out-of-country points but keeps the lat/lng pair rule', () => {
+    // Rio de Janeiro is a valid coordinate but outside South Africa.
+    assert.throws(() => createResidentReportSchema.parse(
+      { category: 'pothole', message: 'rio', lat: -22.9068, lng: -43.1729 }), /South Africa/);
+    // A Cape Town point passes the bounds gate.
+    assert.doesNotThrow(() => createResidentReportSchema.parse(
+      { category: 'pothole', message: 'cpt', lat: -33.9249, lng: 18.4241 }));
+    // No coordinates at all is still allowed (ward falls back to the profile).
+    assert.doesNotThrow(() => createResidentReportSchema.parse(
+      { category: 'pothole', message: 'no geo' }));
+    // The pre-existing both-or-neither lat/lng rule is untouched.
+    assert.throws(() => createResidentReportSchema.parse(
+      { category: 'pothole', message: 'half geo', lat: -33.9 }), /latitude and longitude/i);
+  });
+
+  await test('CMS block create/publish carries kind and only publishes on demand', async () => {
+    const key = `qa.${suffix}.slider`;
+    const created = await content.createBlock({ key, site: 'app', title: 'QA slider', kind: 'slider', schema: {} }, superadmin);
+    assert.equal(created.kind, 'slider', 'new block must round-trip its kind');
+    assert.equal(created.version, 0, 'a fresh block starts unpublished at v0');
+    assert.equal(created.published, null, 'a fresh block has no published payload');
+    // Draft edits are invisible publicly until published.
+    await content.saveDraft(key, { slides: [{ imageMediaId: '', title: 'A', text: 'a', durationSeconds: 5 }] }, superadmin);
+    assert.equal((await content.getBlock(key)).published, null, 'saving a draft must not publish');
+    const published = await content.publishBlock(key, superadmin);
+    assert.equal(published.version, 1, 'publishing bumps to v1');
+    assert.ok(published.published?.slides?.[0]?.title === 'A', 'published payload mirrors the draft');
+  });
+
+  await test('CMS page CRUD orders blocks, publishes only live sections, and rolls back', async () => {
+    const slug = `qa-${suffix}`;
+    const b1 = `qa.${suffix}.one`;
+    const b2 = `qa.${suffix}.two`;
+    await content.createBlock({ key: b1, site: 'marketing', title: 'One', kind: 'fields', schema: { heading: { label: 'H', type: 'text' } } }, superadmin);
+    await content.createBlock({ key: b2, site: 'marketing', title: 'Two', kind: 'fields', schema: { heading: { label: 'H', type: 'text' } } }, superadmin);
+    await content.saveDraft(b1, { heading: 'Hello' }, superadmin);
+    await content.publishBlock(b1, superadmin);
+    // b2 stays DRAFT-only — it must never surface on a published page.
+    await content.saveDraft(b2, { heading: 'Secret draft' }, superadmin);
+
+    const page = await content.createPage({ slug, site: 'marketing', title: 'QA page' }, superadmin);
+    assert.equal(page.version, 0, 'a fresh page starts at v0');
+    assert.equal(await content.getPublishedPage(slug), null, 'an unpublished page is not publicly readable');
+
+    await content.updatePageSections(slug, [{ blockKey: b1 }, { blockKey: b2 }], superadmin);
+    // The same block can never be referenced twice by one page.
+    await rejects(() => content.updatePageSections(slug, [{ blockKey: b1 }, { blockKey: b1 }], superadmin), 400);
+    assert.deepEqual((await content.getPage(slug)).sections.map((s) => s.blockKey), [b1, b2], 'a rejected section write must not persist');
+    // A block referenced by a page cannot be deleted.
+    await rejects(() => content.deleteBlock(b1, superadmin), 409);
+    await content.publishPage(slug, superadmin);
+
+    const view = await content.getPublishedPage(slug);
+    assert.ok(view, 'published page is publicly readable');
+    assert.equal(view.title, 'QA page');
+    assert.deepEqual(view.sections.map((s) => s.key), [b1], 'only published blocks appear, in order');
+    assert.equal(view.sections[0].data.heading, 'Hello');
+
+    // Reorder to just b2 (still draft) then publish v2 and roll back to v1.
+    await content.updatePageSections(slug, [{ blockKey: b2 }], superadmin);
+    await content.publishPage(slug, superadmin);
+    const rolled = await content.rollbackPage(slug, 1, superadmin);
+    assert.equal(rolled.version, 3, 'rollback republishes v1 as a new version (v3)');
+    assert.deepEqual(rolled.publishedSections.map((s) => s.blockKey), [b1, b2], 'rolled-back layout matches v1');
+  });
+  await test('query booleans parse "false" as false (CRM past-event + unread lists)', async () => {
+    const { boolQuery } = await import('../src/http/query.ts');
+    // z.coerce.boolean would read the string "false" as TRUE and trap the
+    // events CRM in an upcoming-only list and alerts in an unread-only list.
+    assert.equal(boolQuery(true).parse('false'), false);
+    assert.equal(boolQuery(true).parse('true'), true);
+    assert.equal(boolQuery(true).parse(undefined), true);
+    assert.equal(boolQuery(false).parse('1'), true);
+  });
+  await test('analytics rollup aggregates one SAST day and is idempotent', async () => {
+    const day = '2020-01-02';
+    // 12:00 SAST (== 10:00Z) falls inside the day; three pageviews from two
+    // visitors across two sessions, plus one non-pageview duration row that must
+    // be excluded from the pageview count but added to the duration sum.
+    await client.query(
+      `INSERT INTO analytics_events (ts, site, event_type, path, visitor_hash, session_id, duration_ms)
+       VALUES
+         ('2020-01-02T10:00:00Z','app','pageview','/a','hashA','sessA',NULL),
+         ('2020-01-02T10:00:00Z','app','pageview','/b','hashA','sessA',NULL),
+         ('2020-01-02T10:00:00Z','app','pageview','/a','hashB','sessB',NULL),
+         ('2020-01-02T10:00:00Z','app','duration','/a','hashB','sessB',5000)`,
+    );
+    // A pageview at 23:30 SAST of the PRIOR day must land on 2020-01-01, not here.
+    await client.query(
+      `INSERT INTO analytics_events (ts, site, event_type, path, visitor_hash, session_id)
+       VALUES ('2020-01-01T21:30:00Z','app','pageview','/late','hashC','sessC')`,
+    );
+    await rollupAnalyticsDay(day);
+    const total = (await client.query(
+      `SELECT pageviews, visitors, sessions, duration_ms_sum FROM analytics_daily
+        WHERE day=$1 AND site='app' AND metric='total' AND key='all'`,
+      [day],
+    )).rows[0];
+    assert.equal(Number(total.pageviews), 3, 'duration event must not count as a pageview');
+    assert.equal(Number(total.visitors), 2);
+    assert.equal(Number(total.sessions), 2);
+    assert.equal(Number(total.duration_ms_sum), 5000);
+    // Recompute must overwrite, never duplicate or double-count.
+    await rollupAnalyticsDay(day);
+    const again = (await client.query(
+      `SELECT count(*)::int AS n, max(pageviews)::int AS pv FROM analytics_daily
+        WHERE day=$1 AND site='app' AND metric='total' AND key='all'`,
+      [day],
+    )).rows[0];
+    assert.equal(again.n, 1, 'rollup must be idempotent (single row per key)');
+    assert.equal(again.pv, 3, 'rollup must not accumulate on recompute');
+  });
+  await test('download rollup counts a SAST day once and is idempotent', async () => {
+    const day = '2020-03-04';
+    await client.query(
+      `INSERT INTO app_downloads (ts, artifact, os, device_type, browser) VALUES
+       ('2020-03-04T10:00:00Z','apk','Android','mobile','Chrome'),
+       ('2020-03-04T11:00:00Z','apk','Android','mobile','Chrome'),
+       ('2020-03-04T09:00:00Z','apk','iOS','mobile','Safari')`,
+    );
+    await client.query(
+      `INSERT INTO app_downloads (ts, artifact, os, device_type, browser)
+       VALUES ('2020-03-03T20:00:00Z','apk','Windows','desktop','Edge')`,
+    );
+    await rollupDownloadDay(day);
+    const total = (await client.query(
+      `SELECT downloads::int AS n FROM download_daily
+        WHERE day=$1 AND artifact='apk' AND metric='total' AND key='all'`,
+      [day],
+    )).rows[0];
+    assert.equal(total.n, 3, 'only the target SAST day counts');
+    await rollupDownloadDay(day);
+    const again = (await client.query(
+      `SELECT count(*)::int AS rows, max(downloads)::int AS n FROM download_daily
+        WHERE day=$1 AND artifact='apk' AND metric='total' AND key='all'`,
+      [day],
+    )).rows[0];
+    assert.equal(again.rows, 1);
+    assert.equal(again.n, 3);
+  });
 
   await test('report create retries are idempotent', async () => {
     const input = createResidentReportSchema.parse({ category: 'Other', message: 'Regression report', requestId: randomUUID() });
@@ -267,6 +432,30 @@ try {
     await client.query("UPDATE patrols SET visibility='private' WHERE ward_code=$1", [ward]);
     assert.equal((await getDashboardActivity({ ...member, permissions: [Permission.PATROL_READ] }, 'patrols')).modules.patrols.total, 0);
     await client.query("UPDATE patrols SET visibility='members' WHERE ward_code=$1", [ward]);
+  });
+  await test('patrol track resolves the GPS ward and persists a crossing into a neighbour', async () => {
+    // Give the two QA wards real geometry far from any seeded ward (the Karoo),
+    // so ST_Intersects cannot match a Cape Town polygon and skew the LIMIT 1.
+    await client.query(`UPDATE regions SET geom=ST_SetSRID(ST_MakeEnvelope(22.9,-31.1,23.1,-30.9,4326),4326) WHERE code=$1`, [ward]);
+    await client.query(`UPDATE regions SET geom=ST_SetSRID(ST_MakeEnvelope(23.2,-31.1,23.4,-30.9,4326),4326) WHERE code=$1`, [outsideWard]);
+    const patrol = await patrols.createPatrol({ mode: 'walk', wardCode: ward }, councilor, ctx);
+    const t0 = Date.now();
+    const home = await patrols.addTrackPoint(patrol.id, { seq: 0, latitude: -31.0, longitude: 23.0, accuracyM: 5, recordedAt: new Date(t0) }, councilor);
+    assert.equal(home.wardCode, ward, 'a fix inside the home ward echoes that ward');
+    const away = await patrols.addTrackPoint(patrol.id, { seq: 1, latitude: -31.0, longitude: 23.3, accuracyM: 5, recordedAt: new Date(t0 + 5000) }, councilor);
+    assert.equal(away.wardCode, outsideWard, 'a fix that moved over echoes the neighbouring ward');
+    const entries = Object.fromEntries(((await patrols.getPatrol(patrol.id, councilor)).wardEntries ?? []).map((e) => [e.wardCode, e]));
+    assert.ok(entries[ward] && entries[ward].crossing === false, 'own ward is recorded and not a crossing');
+    assert.ok(entries[outsideWard] && entries[outsideWard].crossing === true, 'the neighbour is recorded as a crossing');
+    assert.equal(entries[outsideWard].pointCount, 1);
+    // A repeat fix in the neighbour aggregates into the same row (no duplicate).
+    await patrols.addTrackPoint(patrol.id, { seq: 2, latitude: -31.0, longitude: 23.3, accuracyM: 5, recordedAt: new Date(t0 + 10000) }, councilor);
+    const aggregated = ((await patrols.getPatrol(patrol.id, councilor)).wardEntries ?? []).find((e) => e.wardCode === outsideWard);
+    assert.equal(aggregated?.pointCount, 2, 'repeat fixes aggregate into one ward row');
+    // A fix outside every mapped ward records nothing but still saves the point.
+    const nowhere = await patrols.addTrackPoint(patrol.id, { seq: 3, latitude: -30.0, longitude: 25.0, accuracyM: 5, recordedAt: new Date(t0 + 15000) }, councilor);
+    assert.equal(nowhere.wardCode, null, 'an unmapped fix returns no ward');
+    assert.equal((await patrols.getPatrol(patrol.id, councilor)).trackPointCount, 4, 'the unmapped point is still stored');
   });
   await test('report attachments enforce module permissions, ownership and territory', async () => {
     const mediaId = randomUUID();
@@ -470,6 +659,44 @@ try {
     await test('media policy supports cross-origin PUT preflight', async () => {
       const response = await fetch(`${base}/api/transparency/media-policy`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'PUT' } });
       assert.ok(response.headers.get('access-control-allow-methods')?.split(',').includes('PUT'));
+    });
+    await test('notification bell lists unread-only and the archive keeps read messages', async () => {
+      const headers = { Authorization: `Bearer ${signAccessToken(councilor)}` };
+      const mk = (title) => client
+        .query(`INSERT INTO notifications (user_id, kind, title, audience) VALUES ($1,'alert',$2,'staff') RETURNING id`, [councilor.sub, title])
+        .then((r) => r.rows[0].id);
+      const [a, b] = [await mk('QA bell A'), await mk('QA bell B')];
+      assert.equal((await fetch(`${base}/api/notifications/${a}/read`, { method: 'POST', headers })).status, 200);
+      // The route must map ?unread=true onto service.list's unreadOnly, or the
+      // bell keeps surfacing messages the user has already read.
+      const unread = await (await fetch(`${base}/api/notifications?unread=true`, { headers })).json();
+      assert.ok(unread.items.some((n) => n.id === b), 'an unread message must stay in the bell');
+      assert.ok(!unread.items.some((n) => n.id === a), 'a read message must clear from the bell');
+      assert.ok(unread.items.every((n) => n.read === false), 'unread=true must return only unread items');
+      // The archive (no filter) still carries the read message, read-flagged.
+      const all = await (await fetch(`${base}/api/notifications`, { headers })).json();
+      assert.ok(all.items.some((n) => n.id === a && n.read === true), 'the archive keeps read messages');
+    });
+    await test('superadmin ops routes are auth-gated, 403 for lower roles, and stripped by the module toggle', async () => {
+      const opsRoutes = ['/api/analytics/overview', '/api/crm/superadmin/server', '/api/crm/superadmin/content'];
+      const su = { Authorization: `Bearer ${signAccessToken(superadmin)}` };
+      const na = { Authorization: `Bearer ${signAccessToken(admin)}` };
+      const cu = { Authorization: `Bearer ${signAccessToken(councilor)}` };
+      for (const path of opsRoutes) assert.equal((await fetch(`${base}${path}`)).status, 401, `${path} must require authentication`);
+      for (const path of opsRoutes) {
+        assert.equal((await fetch(`${base}${path}`, { headers: na })).status, 403, `national_admin must be denied ${path}`);
+        assert.equal((await fetch(`${base}${path}`, { headers: cu })).status, 403, `ward_councillor must be denied ${path}`);
+      }
+      for (const path of opsRoutes) {
+        const status = (await fetch(`${base}${path}`, { headers: su })).status;
+        assert.ok(status >= 200 && status < 300, `superadmin must reach ${path}, got ${status}`);
+      }
+      // Disabling the superadmin module for the role strips all three surfaces live,
+      // even for an entitled superadmin whose token still names the role.
+      await client.query("INSERT INTO role_module_gates(role,module_key,enabled) VALUES ('superadmin','superadmin',false) ON CONFLICT (role,module_key) DO UPDATE SET enabled=false");
+      for (const path of opsRoutes) assert.equal((await fetch(`${base}${path}`, { headers: su })).status, 403, `disabling the superadmin module must deny ${path}`);
+      await client.query("UPDATE role_module_gates SET enabled=true WHERE role='superadmin' AND module_key='superadmin'");
+      assert.equal((await fetch(`${base}/api/analytics/overview`, { headers: su })).status, 200, 're-enabling the module must restore access');
     });
   } finally { await new Promise((resolve) => server.close(resolve)); }
 

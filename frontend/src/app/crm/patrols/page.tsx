@@ -132,7 +132,9 @@ export default function CrmPatrols() {
             <span key="pu" style={{ fontSize: 13 }}>{(p.purpose ?? '—').slice(0, 50)}</span>,
             p.distanceM != null ? `${(p.distanceM / 1000).toFixed(2)} km` : 'Unknown',
             <span key="st" style={{ fontSize: 13 }}>{fmtDateTime(p.startedAt)}</span>,
-            <CrmBadge key="s" value={p.status} />,
+            p.status === 'active'
+              ? <span key="s" style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3, color: '#15803d', background: '#15803d18' }}>● Live</span>
+              : <CrmBadge key="s" value={p.status} />,
             p.mediaCount ? `${p.mediaCount}` : '—',
             <span key="v" style={{ display: 'inline-flex', gap: 6 }}>
               <CrmSmallButton onClick={() => setDetail(p)}>View</CrmSmallButton>
@@ -217,6 +219,35 @@ function PatrolDetailModal({ patrol, onClose, onEdit, canWrite, onUpdated }: { p
       </div>
       {full.purpose && <p><strong>Purpose:</strong> {full.purpose}</p>}
       {full.summary && <p style={{ whiteSpace: 'pre-wrap', color: '#374151' }}><strong>Summary:</strong><br />{full.summary}</p>}
+
+      {full.wardEntries && full.wardEntries.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <strong>Wards walked ({full.wardEntries.length})</strong>
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {full.wardEntries.map((w) => (
+              <span
+                key={w.wardCode}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                  borderRadius: 10, fontSize: 12,
+                  color: w.crossing ? '#b45309' : '#15803d',
+                  background: w.crossing ? '#b4530918' : '#15803d18',
+                }}
+                title={`First ${fmtDateTime(w.firstSeenAt)} · last ${fmtDateTime(w.lastSeenAt)} · ${w.pointCount} fixes`}
+              >
+                {w.wardName ? `${w.wardName} · ${w.wardCode}` : w.wardCode}
+                {w.crossing ? ' · crossed in' : ''}
+              </span>
+            ))}
+          </div>
+          {full.wardEntries.some((w) => w.crossing) && (
+            <p style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+              The tracked route moved into a neighbouring ward (crossed in); it stays
+              filed to {full.wardCode ?? 'its own ward'}.
+            </p>
+          )}
+        </div>
+      )}
 
       {media.length > 0 && (
         <div style={{ marginTop: 12 }}>

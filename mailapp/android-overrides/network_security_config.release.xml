@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  UDF secure-mail network security config — RELEASE variant.
+
+  HTTPS-only, Android system CA trust. `assembleRelease` uses this over src/main.
+
+  Deliberate NO certificate/public-key pin: the webmail certificate is a Let's
+  Encrypt certificate that rotates its intermediate and leaf every ~60-90 days
+  via certbot, so a static SPKI pin would silently brick every fielded councillor
+  device on the next renewal — a worse failure than it prevents. The transport
+  guarantees that DO matter here are enforced instead: cleartext is off (no
+  downgrade), only the system trust store is accepted (no user-added/overlay CAs,
+  so a compromised or MITM proxy on the device cannot present a trusted cert),
+  and the WebView origin is fixed to https://mail.udf-party.co.za in
+  capacitor.config.ts. If pinning is ever required, pin the ISRG Root X1 anchor
+  and couple renewal to it — do not pin a leaf or the short-lived Let's Encrypt
+  intermediate.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

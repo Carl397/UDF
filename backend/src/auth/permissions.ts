@@ -7,6 +7,12 @@
  */
 
 export const Role = {
+  /**
+   * Platform owner. A strict superset of national_admin plus the operations
+   * surface (server/cron status, first-party analytics, website content). Kept
+   * distinct so ops tooling is not exposed to every political national admin.
+   */
+  SUPERADMIN: 'superadmin',
   NATIONAL_ADMIN: 'national_admin',
   REGIONAL_ORGANIZER: 'regional_organizer',
   LOCAL_COORDINATOR: 'local_coordinator',
@@ -118,12 +124,24 @@ export const Permission = {
   RATING_SCORECARD_WRITE: 'rating:scorecard_write',
   RATING_SCORECARD_READ: 'rating:scorecard_read',
   RATING_ACKNOWLEDGE: 'rating:acknowledge',
+  /**
+   * SuperAdmin operations surface (owned by the `superadmin` module):
+   * `platform:read` opens the server/cron/live-status dashboards, `analytics:read`
+   * opens the first-party website/app analytics, and `content:manage` opens the
+   * structured website content editor. Held only by the `superadmin` role.
+   */
+  PLATFORM_READ: 'platform:read',
+  ANALYTICS_READ: 'analytics:read',
+  CONTENT_MANAGE: 'content:manage',
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
-export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
-  [Role.NATIONAL_ADMIN]: [
+/**
+ * The national-admin base matrix, extracted so `superadmin` can be defined as a
+ * strict superset without duplicating (and risking drift from) the list.
+ */
+const NATIONAL_ADMIN_PERMISSIONS: readonly Permission[] = [
     Permission.MEMBER_READ,
     Permission.MEMBER_WRITE,
     Permission.MEMBER_DELETE,
@@ -171,7 +189,17 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     // acknowledge. NOT scorecard_write — FR-S5 keeps submission a member action.
     Permission.RATING_SCORECARD_READ,
     Permission.RATING_ACKNOWLEDGE,
+];
+
+export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
+  // SuperAdmin: everything national_admin can do, plus the ops/analytics/content surface.
+  [Role.SUPERADMIN]: [
+    ...NATIONAL_ADMIN_PERMISSIONS,
+    Permission.PLATFORM_READ,
+    Permission.ANALYTICS_READ,
+    Permission.CONTENT_MANAGE,
   ],
+  [Role.NATIONAL_ADMIN]: NATIONAL_ADMIN_PERMISSIONS,
   [Role.REGIONAL_ORGANIZER]: [
     Permission.MEMBER_READ,
     Permission.MEMBER_WRITE,
@@ -384,6 +412,8 @@ export const ModuleKey = {
   ADMIN: 'admin',
   RECRUITMENT: 'recruitment',
   SCORECARDS: 'scorecards',
+  /** SuperAdmin operations: server/cron status, analytics, website content editor. */
+  SUPERADMIN: 'superadmin',
 } as const;
 
 export type ModuleKey = (typeof ModuleKey)[keyof typeof ModuleKey];
@@ -453,6 +483,12 @@ export const MODULE_PERMISSIONS: Record<ModuleKey, readonly Permission[]> = {
     Permission.RATING_SCORECARD_WRITE,
     Permission.RATING_SCORECARD_READ,
     Permission.RATING_ACKNOWLEDGE,
+  ],
+  // SuperAdmin ops surface: disabling it strips the platform/analytics/content trio together.
+  [ModuleKey.SUPERADMIN]: [
+    Permission.PLATFORM_READ,
+    Permission.ANALYTICS_READ,
+    Permission.CONTENT_MANAGE,
   ],
 };
 
@@ -564,5 +600,20 @@ export interface Principal {
 
 /** True when the principal is scoped to the whole country. */
 export function isNationalScope(p: Principal): boolean {
-  return p.role === Role.NATIONAL_ADMIN || (p.role === Role.ANALYST && !p.wardCode && !p.regionCodes?.length);
+  return (
+    p.role === Role.SUPERADMIN ||
+    p.role === Role.NATIONAL_ADMIN ||
+    (p.role === Role.ANALYST && !p.wardCode && !p.regionCodes?.length)
+  );
+}
+
+/**
+ * True for the top administrative roles that are national by definition and hold
+ * the national_admin base matrix: `national_admin` and its strict superset
+ * `superadmin`. Use this (not a raw `role === 'national_admin'` check) wherever a
+ * module grants national-admin the widest, unscoped access, so superadmin keeps
+ * the same reach. Deliberately excludes the national analyst (aggregate-only).
+ */
+export function isNationalAdmin(role: string): boolean {
+  return role === Role.SUPERADMIN || role === Role.NATIONAL_ADMIN;
 }

@@ -1,0 +1,521 @@
+/* UDF mobile-app landing page — brand-driven, mobile-first. */
+
+.udf-landing {
+  --red: #c8102e;
+  --red-dark: #a00d24;
+  --red-deep: #7c0a1b;
+  --black: #141414;
+  /* gold retired — remapped into the red family so stray refs stay on-brand */
+  --gold: #c8102e;
+  --gold-soft: #e0455c;
+  --white: #ffffff;
+  --gray: #6b6b6b;
+  --paper: #faf7f5;
+  color: var(--black);
+  background: var(--paper);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.udf-landing * {
+  box-sizing: border-box;
+}
+
+.udf-container {
+  width: min(1080px, 100% - 32px);
+  margin-inline: auto;
+}
+
+/* ── Top nav ─────────────────────────────────────────── */
+.udf-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(12px);
+  background: rgba(200, 16, 46, 0.94);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.udf-nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+.udf-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--white);
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+.udf-brand-flag {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--black);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+.udf-nav-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  background: #fff;
+  color: var(--red-dark);
+  border: none;
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+/* ── Hero ────────────────────────────────────────────── */
+.udf-hero {
+  position: relative;
+  overflow: hidden;
+  color: var(--white);
+  background: linear-gradient(160deg, var(--red) 0%, var(--red-dark) 55%, var(--red-deep) 100%);
+}
+.udf-hero::after {
+  content: none;
+}
+.udf-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 36px;
+  padding: 56px 0 72px;
+  align-items: center;
+}
+@media (min-width: 880px) {
+  .udf-hero-inner {
+    grid-template-columns: 1.1fr 0.9fr;
+    padding: 84px 0 96px;
+  }
+}
+.udf-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.udf-h1 {
+  margin: 18px 0 12px;
+  font-size: clamp(34px, 7vw, 60px);
+  line-height: 1.04;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+}
+.udf-h1 .gold {
+  color: #fff;
+}
+.udf-sub {
+  max-width: 46ch;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: clamp(15px, 2.4vw, 18px);
+  line-height: 1.6;
+}
+.udf-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 26px;
+}
+.udf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 14px;
+  padding: 14px 22px;
+  font-weight: 800;
+  font-size: 15px;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.udf-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+.udf-btn-gold {
+  background: #fff;
+  color: var(--red-dark);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+.udf-btn-ghost {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--white);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.udf-hero-meta {
+  display: flex;
+  gap: 22px;
+  margin-top: 26px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 13px;
+}
+.udf-hero-meta b {
+  display: block;
+  color: var(--white);
+  font-size: 18px;
+}
+
+/* Phone mockup in hero */
+.udf-phone {
+  position: relative;
+  justify-self: center;
+  width: min(300px, 78vw);
+  aspect-ratio: 9 / 19;
+  border-radius: 40px;
+  background: var(--black);
+  padding: 10px;
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
+}
+.udf-phone-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 32px;
+  overflow: hidden;
+  background: var(--red);
+}
+.udf-phone-notch {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40%;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--black);
+  z-index: 3;
+}
+
+/* ── Section scaffolding ─────────────────────────────── */
+.udf-section {
+  padding: 64px 0;
+}
+.udf-section-dark {
+  background: var(--black);
+  color: var(--white);
+}
+.udf-kicker {
+  color: var(--red);
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+.udf-section-dark .udf-kicker {
+  color: #fff;
+}
+.udf-h2 {
+  margin: 10px 0 14px;
+  font-size: clamp(26px, 4.6vw, 40px);
+  font-weight: 900;
+  letter-spacing: -0.4px;
+}
+.udf-lead {
+  color: var(--gray);
+  max-width: 60ch;
+  line-height: 1.65;
+}
+.udf-section-dark .udf-lead {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Feature grid */
+.udf-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 34px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 640px) {
+  .udf-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 960px) {
+  .udf-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+.udf-card {
+  background: var(--white);
+  border: 1px solid #eee4e0;
+  border-radius: 20px;
+  padding: 22px;
+  box-shadow: 0 12px 40px rgba(20, 20, 20, 0.06);
+}
+.udf-card-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  font-size: 22px;
+  margin-bottom: 14px;
+}
+.udf-card h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 800;
+}
+.udf-card p {
+  margin: 0;
+  color: var(--gray);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* Screens / mockups row */
+.udf-screens {
+  display: grid;
+  gap: 28px;
+  margin-top: 40px;
+  grid-template-columns: 1fr;
+  align-items: center;
+}
+@media (min-width: 880px) {
+  .udf-screens {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.udf-screen {
+  border-radius: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #1e1e1e;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+.udf-screen figcaption {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Accountability tools */
+.udf-tools {
+  display: grid;
+  gap: 16px;
+  margin-top: 34px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 880px) {
+  .udf-tools {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.udf-tool {
+  position: relative;
+  background: var(--white);
+  border: 1px solid #eee4e0;
+  border-radius: 20px;
+  padding: 24px 22px;
+  box-shadow: 0 12px 40px rgba(20, 20, 20, 0.06);
+}
+.udf-tool-num {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  font-weight: 900;
+  font-size: 18px;
+}
+.udf-tool h4 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 800;
+}
+.udf-tool p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--gray);
+  line-height: 1.6;
+}
+
+/* Accountability banner */
+.udf-banner {
+  margin-top: 22px;
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  border-radius: 22px;
+  padding: 30px 26px;
+  text-align: center;
+  box-shadow: 0 20px 50px rgba(200, 16, 46, 0.28);
+}
+.udf-banner p {
+  margin: 0 auto;
+  max-width: 52ch;
+  font-size: clamp(17px, 2.4vw, 22px);
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+/* Download links render as <button> to hide the APK source URL. */
+button.udf-btn,
+button.udf-nav-cta {
+  font-family: inherit;
+  line-height: 1.1;
+}
+button.udf-btn img,
+button.udf-nav-cta img {
+  display: block;
+  flex: none;
+}
+
+/* Brand poster band — shows the WHOLE square illustration, fits without zoom/crop */
+.udf-poster {
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: #fff;
+  padding: clamp(30px, 5vw, 46px) 0;
+}
+.udf-poster-in {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+.udf-poster-img {
+  width: auto;
+  height: min(46vw, 340px);
+  max-width: 86vw;
+  border-radius: 18px;
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.4);
+}
+.udf-poster-cap {
+  font-size: clamp(19px, 3vw, 27px);
+  font-weight: 900;
+  letter-spacing: -0.2px;
+}
+
+/* Notification preview */
+.udf-notif {
+  margin: 34px auto 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--white);
+  color: var(--black);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.35);
+  max-width: 460px;
+}
+.udf-notif-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.udf-notif-title {
+  font-weight: 800;
+  font-size: 14px;
+}
+.udf-notif-body {
+  padding: 0 14px 12px;
+  font-size: 13px;
+  color: var(--gray);
+}
+
+/* Final CTA */
+.udf-cta-band {
+  background: linear-gradient(160deg, var(--red), var(--red-dark));
+  color: var(--white);
+  border-radius: 28px;
+  padding: 44px 28px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(200, 16, 46, 0.35);
+}
+.udf-cta-band h2 {
+  margin: 0 0 10px;
+  font-size: clamp(24px, 4.6vw, 38px);
+  font-weight: 900;
+}
+.udf-cta-band p {
+  margin: 0 auto 24px;
+  max-width: 46ch;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Footer */
+.udf-footer {
+  background: var(--black);
+  color: rgba(255, 255, 255, 0.65);
+  padding: 34px 0;
+  font-size: 13px;
+}
+.udf-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+.udf-footer a {
+  color: #fff;
+  text-decoration: none;
+}
+
+/* ── Static-copy helpers (marketing-site port of the /mobile landing) ── */
+/* Nav brand mark: red rounded tile holding the whole illustration (contain). */
+.udf-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  background: var(--red);
+  border-radius: 20%;
+  padding: 3px;
+  box-sizing: border-box;
+}
+.udf-brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 12%;
+}
+.udf-brand a {
+  color: inherit;
+  text-decoration: none;
+}
+/* next/image `fill` replacements: absolutely-positioned cover images. */
+.udf-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.udf-screen > div,
+.udf-notif > div {
+  position: relative;
+}

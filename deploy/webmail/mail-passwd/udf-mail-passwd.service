@@ -1,0 +1,34 @@
+# Changes @udf-party.co.za mailbox passwords on behalf of the webmail UI.
+# Installed by deploy/scripts/enable-webmail-password.sh - do not edit on the
+# server, edit the copy in the repo and re-run that script.
+[Unit]
+Description=UDF mailbox password-change helper (Roundcube webmail)
+# No dependency on dovecot on purpose: this only rewrites /etc/dovecot/users,
+# so a password change must still work while Dovecot itself is restarting.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/udf-mail-passwd
+Restart=always
+RestartSec=2
+User=root
+Group=root
+UMask=0077
+RuntimeDirectory=udf-mail-passwd
+RuntimeDirectoryMode=0755
+Environment=UDF_MAIL_SOCKET=/run/udf-mail-passwd/mail.sock
+Environment=UDF_MAIL_SOCKET_GROUP=www-data
+Environment=UDF_MAIL_DOMAIN=udf-party.co.za
+# It writes exactly one file and talks on exactly one unix socket.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/dovecot
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+MemoryMax=64M
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target

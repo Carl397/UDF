@@ -1,0 +1,27 @@
+# UDF councillor mailboxes to provision on the mail host (udf-party.co.za).
+# localpart <TAB> candidate as certified <TAB> ward(s). Source: IEC LGE2026 WC certified candidate list.
+jchristians	JEFF MARIO THOMAS CHRISTIANS	Ward 116
+acloete	ASHLEY CRAIG CLOETE	Ward 69, Ward 70
+ddaniels	DENVER DANIELS	Ward 65
+mesterhuizen	MAHMOUD ESTERHUIZEN	Ward 29, Ward 32
+khoffman	KENNITH PHILIP HOFFMAN	Ward 75
+tjantjes	TREVOR LESLEY ISAAC JANTJES	Ward 76
+kmaarman	KAREN DAWN MAARMAN	Ward 68
+agmarks	ANDHOR GREY MARKS	Ward 2, Ward 3, Ward 5, Ward 6, Ward 7, Ward 8, Ward 9, Ward 10, Ward 11, Ward 12, Ward 13, Ward 15, Ward 16, Ward 17, Ward 18, Ward 19, Ward 23, Ward 31, Ward 33, Ward 35, Ward 39, Ward 40, Ward 41, Ward 50, Ward 52, Ward 54, Ward 55, Ward 59, Ward 91, Ward 93, Ward 94, Ward 95, Ward 96, Ward 97, Ward 99, Ward 101, Ward 103, Ward 117, Ward 118
+akmarks	ANDHOR KARL MARKS	Ward 26, Ward 27, Ward 28, Ward 30, Ward 34, Ward 36, Ward 37, Ward 38, Ward 42, Ward 44, Ward 51
+jmarks	JACQUELINE WEAVER MARKS	Ward 64
+mminnies	MARK MINNIES	Ward 43, Ward 87, Ward 88, Ward 89, Ward 102, Ward 104, Ward 105, Ward 106, Ward 108, Ward 109
+jnefdt	JOSEPH RICHARD NICHOLS NEFDT	Ward 20, Ward 21, Ward 22, Ward 24, Ward 25, Ward 53, Ward 56, Ward 57, Ward 58, Ward 62, Ward 63, Ward 73, Ward 85, Ward 98, Ward 100, Ward 112, Ward 113, Ward 114
+snefdt	SEAN FREDERICK NEFDT	Ward 1, Ward 4
+snoble	STEPHEN NOBLE	Ward 81
+joliphant	JEFFREY BOTHATA OLIPHANT	Ward 14
+rprinsloo	ROY STANLEY PRINSLOO	Ward 71, Ward 74, Ward 77, Ward 80, Ward 83, Ward 84, Ward 86, Ward 90, Ward 92, Ward 107, Ward 111, Ward 115
+arobinson	AUBREY CHARLES ROBINSON	Ward 110
+rroman	ROGER STEVE ROMAN	Ward 72
+asampie	ANDRE CHRISTOPHER SAMPIE	Ward 60
+rsimons	RONALD STEPHEN SIMONS	Ward 67
+lsolomons	LIONEL GODFREY SOLOMONS	Ward 82
+rsolomons	RASHIED SOLOMONS	Ward 78
+fswartz	FATIMA SWARTZ	Ward 46, Ward 47, Ward 48, Ward 49
+cvandervent	CHRISTOPHER VAN DER VENT	Ward 79
+rwindvogel	RAYBIN THOMAS CHARLES WINDVOGEL	Ward 45

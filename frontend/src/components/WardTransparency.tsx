@@ -263,7 +263,16 @@ export function WardFinder() {
           {result.vacant || !result.councillor ? (
             <div className="banner" style={{ marginTop: 10 }}>
               <Icon name="flag" size={16} />
-              <span>The councillor seat for this ward is currently vacant. Watch ward bulletins for updates.</span>
+              {/* An empty ward has two honest explanations and they are not
+                  interchangeable. A contested seat that is currently empty will
+                  be filled; a ward the party never stood anyone in had no seat
+                  to fill, and calling that "vacant" promises something that
+                  cannot happen. Unknown (`contested` absent) stays neutral. */}
+              <span>
+                {result.contested === false
+                  ? 'UDF did not field a candidate in this ward at the 2026 local elections, so there is no ward councillor here. Your regional leadership represents the ward in the meantime.'
+                  : 'The councillor seat for this ward is currently vacant. Watch ward bulletins for updates.'}
+              </span>
             </div>
           ) : (
             <div style={{ marginTop: 6, display: 'flex', gap: 12, alignItems: 'flex-start' }}>

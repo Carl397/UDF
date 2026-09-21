@@ -98,6 +98,12 @@ export default function PatrolSheet({
   const trackingStarting = useRef(false);
   const trackQueue = useRef<Promise<void>>(Promise.resolve());
   const [trackingError, setTrackingError] = useState<string | null>(null);
+  // The ward the device's live GPS fix resolves into (echoed back by the server
+  // on each saved track point). Shown as the "which ward am I in" label; a code
+  // differing from the patrol's own ward means the patrol crossed into a
+  // neighbour and is flagged live there. Display only — the patrol stays filed
+  // to its own ward.
+  const [liveWard, setLiveWard] = useState<{ code: string | null; name: string | null } | null>(null);
   // A precise (≤4 m) fix for the stop, with a live indicator + street/area box.
   const stopLoc = usePreciseLocation(4);
   const [stopAddress, setStopAddress] = useState<{ pos: Position | null; value: string } | null>(null);
@@ -154,6 +160,7 @@ export default function PatrolSheet({
         seqRef.current = saved.nextTrackSeq ?? 0;
         setPoints(saved.trackPointCount ?? 0);
         setTrackingError(null);
+        setLiveWard(saved.wardCode ? { code: saved.wardCode, name: null } : null);
         const handle = await watchPosition(
           (pos) => {
             if (generation !== trackingGeneration.current || (pos.accuracyM ?? Infinity) > 100) return;
@@ -174,9 +181,12 @@ export default function PatrolSheet({
                   : {}),
                 recordedAt,
               })
-              .then(() => {
+              .then((r) => {
                 setPoints((n) => n + 1);
                 setDistance(Math.round(distRef.current));
+                // The server resolves the fix against the ward geometry and
+                // echoes the ward back — drive the live ward label from it.
+                if (r && typeof r.wardCode !== 'undefined') setLiveWard({ code: r.wardCode, name: r.wardName });
               })
               .catch((e) => setTrackingError(e?.message ?? 'A track point was not saved. Distance may be incomplete.')));
           },
@@ -432,9 +442,37 @@ export default function PatrolSheet({
               {current.startedAt ? new Date(current.startedAt).toLocaleTimeString() : 'now'}
               {current.wardCode ? ` · Ward ${current.wardCode}` : ''} · {current.mode}
             </p>
+            {/* Live GPS ward. Green when still in your own ward, amber once the
+                track has moved into a neighbouring ward. */}
+            <div className="chip-row" style={{ marginTop: 10 }}>
+              <span
+                className={`badge ${
+                  liveWard?.code && current.wardCode && liveWard.code !== current.wardCode
+                    ? 'warn'
+                    : tracking
+                      ? 'ok'
+                      : ''
+                }`}
+              >
+                <span className={`dot ${tracking ? 'ok' : 'warn'}`} style={{ marginRight: 6 }} />
+                {tracking ? 'LIVE' : 'PAUSED'} ·{' '}
+                {liveWard?.code
+                  ? liveWard.name
+                    ? `${liveWard.name} (${liveWard.code})`
+                    : `Ward ${liveWard.code}`
+                  : 'Locating ward…'}
+              </span>
+            </div>
           </div>
 
           {trackingError && <p className="banner err" role="alert">{trackingError}</p>}
+          {tracking && liveWard?.code && current.wardCode && liveWard.code !== current.wardCode && (
+            <p className="banner warn" role="status">
+              Patrol is live in{' '}
+              {liveWard.name ? `${liveWard.name} (${liveWard.code})` : `Ward ${liveWard.code}`},
+              outside your ward {current.wardCode}. It stays filed to {current.wardCode}.
+            </p>
+          )}
           <div className="card">
             <div className="mini-label">Log a call / Add a stop</div>
             <LocationBox loc={stopLoc} idleLabel="Get precise stop location" fullAddress />
@@ -594,6 +632,31 @@ export default function PatrolSheet({
           )}
 
           {current.media?.map((media) => <MediaThumb key={media.mediaId} mediaId={media.mediaId} label="Patrol attachment" />)}
+          {/* Wards the GPS track actually passed through; a `crossing` row is a
+              neighbouring ward the patrol moved over into. */}
+          {current.wardEntries && current.wardEntries.length > 0 && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div className="mini-label">Wards walked ({current.wardEntries.length})</div>
+              <div className="rows" style={{ marginTop: 6 }}>
+                {current.wardEntries.map((w) => (
+                  <div key={w.wardCode} className="row" style={{ cursor: 'default' }}>
+                    <span className="row-ico"><Icon name="pin" /></span>
+                    <span className="row-main">
+                      <span className="row-title">{w.wardName ? `${w.wardName} · ${w.wardCode}` : w.wardCode}</span>
+                      <span className="row-sub tiny">
+                        {new Date(w.firstSeenAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                        {' → '}{new Date(w.lastSeenAt).toLocaleTimeString()}
+                        {` · ${w.pointCount} fix${w.pointCount === 1 ? '' : 'es'}`}
+                      </span>
+                    </span>
+                    {w.crossing
+                      ? <span className="badge warn">live in other ward</span>
+                      : <span className="badge ok">own ward</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {stopsError && <div className="banner err" role="alert">{stopsError} <button className="btn btn-sm" onClick={() => setReload((n) => n + 1)}>Retry</button></div>}
           {/* Call log entries */}
           <div style={{ marginTop: 16 }}>

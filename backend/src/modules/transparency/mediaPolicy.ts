@@ -21,19 +21,27 @@ export async function setMediaPolicy(policy: MediaPolicy, principal: Principal) 
 }
 
 const SUPPORTED = new Set(['image/jpeg','image/png','image/webp','video/mp4','video/webm','video/quicktime',
-  'audio/webm','audio/ogg','audio/mp4','audio/m4a','audio/x-m4a','audio/mpeg','audio/wav','audio/x-wav','audio/aac']);
-export function parseCapturedMedia(dataUrl: string, mode: string) {
+  'audio/webm','audio/ogg','audio/mp4','audio/m4a','audio/x-m4a','audio/mpeg','audio/wav','audio/x-wav','audio/aac',
+  // Bulletin / event document attachments (PDF). Not a capture, so it is never
+  // gated by the photo/video/voice policy toggles below.
+  'application/pdf']);
+/** What a validated data-url turned out to be. `document` = a PDF attachment. */
+export type MediaKind = 'photo' | 'video' | 'voice' | 'document';
+export function parseCapturedMedia(dataUrl: string, mode: string): { contentType: string; buffer: Buffer; kind: MediaKind } {
   if (dataUrl.length > 8 * 1024 * 1024) throw ApiError.badRequest('Attachment exceeds the 8 MB encoded limit');
   const match = /^data:([a-z0-9+.-]+\/[a-z0-9+.-]+)(?:;codecs=[a-z0-9.,_-]+)?;base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl);
   if (!match) throw ApiError.badRequest('Invalid base64 media data URL');
   const contentType = match[1]!.toLowerCase();
-  if (!SUPPORTED.has(contentType)) throw ApiError.badRequest('Unsupported media format. Use JPEG/PNG/WebP, MP4/WebM video, or a supported audio file.');
-  const kind = contentType.startsWith('image/') ? 'photo' : contentType.startsWith('video/') ? 'video' : 'voice';
+  if (!SUPPORTED.has(contentType)) throw ApiError.badRequest('Unsupported media format. Use JPEG/PNG/WebP, MP4/WebM video, PDF, or a supported audio file.');
+  const kind: MediaKind = contentType.startsWith('image/') ? 'photo'
+    : contentType.startsWith('video/') ? 'video'
+    : contentType === 'application/pdf' ? 'document'
+    : 'voice';
   const expected = mode === 'voice_note' || mode === 'audio' ? 'voice' : mode;
   if (kind !== expected) throw ApiError.badRequest('Attachment type does not match capture mode');
   const buffer = Buffer.from(match[2]!, 'base64');
   if (!buffer.length || buffer.toString('base64').replace(/=+$/, '') !== match[2]!.replace(/=+$/, '')) throw ApiError.badRequest('Invalid media payload');
-  return { contentType, buffer, kind: kind as keyof MediaPolicy };
+  return { contentType, buffer, kind };
 }
 export async function validateMediaBatch(items: Array<{ dataUrl: string; captureMode: string }>) {
   if (!items.length) return;
@@ -41,6 +49,9 @@ export async function validateMediaBatch(items: Array<{ dataUrl: string; capture
   const policy = await getMediaPolicy();
   for (const item of items) {
     const parsed = parseCapturedMedia(item.dataUrl, item.captureMode);
-    if (!policy[parsed.kind]) throw ApiError.forbidden(`${parsed.kind} attachments have been disabled by the administrator`);
+    // Documents are not a capture type and carry no policy toggle.
+    if (parsed.kind !== 'document' && !policy[parsed.kind]) {
+      throw ApiError.forbidden(`${parsed.kind} attachments have been disabled by the administrator`);
+    }
   }
 }

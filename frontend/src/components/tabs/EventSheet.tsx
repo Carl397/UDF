@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { useShell } from '../AppShell';
 import { Icon, Sheet, useToast } from '../ui';
 import { REGIONS } from './FilterBar';
@@ -69,12 +70,30 @@ export default function EventSheet({
   onSaved: () => void;
 }) {
   const { caps, refreshUnread } = useShell();
+  const { authenticated } = useAuth();
   const toast = useToast();
   const [form, setForm] = useState<Form>(() => defaultForm(event));
   const [editing, setEditing] = useState(!event);
   const [busy, setBusy] = useState(false);
   const [rsvpCount, setRsvpCount] = useState(event?.rsvpCount ?? 0);
-  const [going, setGoing] = useState(false);
+  const [going, setGoing] = useState(event?.going ?? false);
+  const [coverFailed, setCoverFailed] = useState(false);
+
+  // RSVP is now named, so "going" is only known per signed-in member. A sheet
+  // opened from the public calendar carries `going: false`; re-read the single
+  // event (which the server annotates for the caller) once we know they're in.
+  useEffect(() => {
+    if (!event?.id || !authenticated) return;
+    const controller = new AbortController();
+    api
+      .getEvent(event.id)
+      .then((fresh) => {
+        setGoing(fresh.going);
+        setRsvpCount(fresh.rsvpCount);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [event?.id, authenticated]);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
@@ -114,6 +133,10 @@ export default function EventSheet({
 
   async function rsvp() {
     if (!event) return;
+    if (!authenticated) {
+      toast('Please sign in to RSVP', 'err');
+      return;
+    }
     setBusy(true);
     try {
       const updated = await api.rsvpEvent(event.id);
@@ -122,6 +145,21 @@ export default function EventSheet({
       toast('You are on the list', 'ok');
     } catch (e: any) {
       toast(e?.message ?? 'RSVP failed', 'err');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelRsvp() {
+    if (!event) return;
+    setBusy(true);
+    try {
+      const updated = await api.cancelRsvp(event.id);
+      setRsvpCount(updated.rsvpCount);
+      setGoing(false);
+      toast('Removed from the list', 'ok');
+    } catch (e: any) {
+      toast(e?.message ?? 'Could not update RSVP', 'err');
     } finally {
       setBusy(false);
     }
@@ -167,8 +205,14 @@ export default function EventSheet({
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn btn-primary" style={{ flex: 2 }} onClick={rsvp} disabled={busy || going}>
-              <Icon name="checkCircle" size={16} /> {going ? 'Going' : `I'm going${rsvpCount ? ` · ${rsvpCount}` : ''}`}
+            <button
+              className={`btn ${going ? 'btn-ghost' : 'btn-primary'}`}
+              style={{ flex: 2 }}
+              onClick={going ? cancelRsvp : rsvp}
+              disabled={busy}
+            >
+              <Icon name={going ? 'checkCircle' : 'calendar'} size={16} />
+              {going ? `Going · tap to cancel${rsvpCount ? ` (${rsvpCount})` : ''}` : `I'm going${rsvpCount ? ` · ${rsvpCount}` : ''}`}
             </button>
             {caps.eventWrite && (
               <button className="btn btn-ghost" onClick={() => setEditing(true)} aria-label="Edit event">
@@ -339,6 +383,22 @@ export default function EventSheet({
       ) : (
         event && (
           <>
+            {event.hasCover && !coverFailed && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={api.eventCoverUrl(event.id)}
+                alt=""
+                onError={() => setCoverFailed(true)}
+                style={{
+                  width: '100%',
+                  aspectRatio: '16 / 9',
+                  objectFit: 'cover',
+                  borderRadius: 12,
+                  marginBottom: 12,
+                  background: '#f1f5f9',
+                }}
+              />
+            )}
             <div className="chip-row" style={{ marginBottom: 12 }}>
               <span className="badge">{event.kind}</span>
               <span className={`badge ${event.status === 'cancelled' ? 'danger' : event.status === 'live' ? 'ok' : ''}`}>

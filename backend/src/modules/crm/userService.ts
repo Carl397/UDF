@@ -22,6 +22,7 @@ interface UserRow {
   role: string;
   region_codes: string[];
   ward_code: string | null;
+  ward_codes: string[];
   is_active: boolean;
   created_at: string;
   sealed_pii: SealedRecord | null;
@@ -53,6 +54,8 @@ export interface PublicUser {
   role: string;
   regionCodes: string[];
   wardCode: string | null;
+  /** Full list of wards this councillor is publicly shown for; wardCode is the primary. */
+  wardCodes: string[];
   isActive: boolean;
   createdAt: string;
   permissionGrants: string[];
@@ -62,7 +65,7 @@ export interface PublicUser {
   title: string | null;
 }
 
-const SELECT_COLS = `id, role, region_codes, ward_code, is_active, created_at, sealed_pii,
+const SELECT_COLS = `id, role, region_codes, ward_code, ward_codes, is_active, created_at, sealed_pii,
        permission_grants, permission_revokes, avatar_media_id, member_id, bio, title`;
 
 /** Decrypt the sealed email/fullName for display (best-effort). */
@@ -84,6 +87,7 @@ function toPublic(row: UserRow, pii: { email: string | null; fullName: string | 
     role: row.role,
     regionCodes: row.region_codes ?? [],
     wardCode: row.ward_code,
+    wardCodes: row.ward_codes?.length ? row.ward_codes : (row.ward_code ? [row.ward_code] : []),
     isActive: row.is_active,
     createdAt: row.created_at,
     permissionGrants: row.permission_grants ?? [],
@@ -167,6 +171,16 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
+ * Normalize a councillor's public ward list: trim, drop empties, dedupe while
+ * preserving order (first entry = primary ward). Falls back to the legacy
+ * single wardCode when no list is supplied.
+ */
+function normalizeWards(wardCodes: readonly string[] | undefined, wardCode?: string | null): string[] {
+  const list = wardCodes ?? (wardCode ? [wardCode] : []);
+  return [...new Set(list.map((s) => String(s ?? '').trim()).filter(Boolean))];
+}
+
+/**
  * Mirror a ward_councillor's photo + bio into the public `leaders` profile so
  * residents see their councillor's face and bio on the ward/verify pages.
  * `leaders` has no natural unique key (only its id primary key), so guard on the
@@ -186,14 +200,16 @@ async function syncCouncillorLeader(userId: string): Promise<void> {
     const fullName = pii.fullName?.trim() && pii.fullName !== pii.email && !pii.fullName.includes('@')
       ? pii.fullName : 'Ward councilor';
     const regionCode = row.region_codes?.[0] ?? row.ward_code;
+    const wardCodes = row.ward_codes?.length ? row.ward_codes : [row.ward_code];
     await run(
-      `INSERT INTO leaders (user_id, ward_code, region_code, full_name, bio, photo_id, member_id, is_public)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+      `INSERT INTO leaders (user_id, ward_code, ward_codes, region_code, full_name, bio, photo_id, member_id, is_public)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
        ON CONFLICT (user_id) DO UPDATE SET ward_code = EXCLUDED.ward_code,
+         ward_codes = EXCLUDED.ward_codes,
          region_code = EXCLUDED.region_code, full_name = EXCLUDED.full_name,
          bio = EXCLUDED.bio, photo_id = EXCLUDED.photo_id, member_id = EXCLUDED.member_id,
          is_public = TRUE, updated_at = now()`,
-      [userId, row.ward_code, regionCode, fullName, row.bio, row.avatar_media_id, row.member_id]);
+      [userId, row.ward_code, wardCodes, regionCode, fullName, row.bio, row.avatar_media_id, row.member_id]);
   });
 }
 
@@ -205,6 +221,8 @@ export async function createUser(
     fullName?: string;
     regionCodes?: string[];
     wardCode?: string | null;
+    /** Full ward list for a councillor's public link; wardCode (primary) is derived from its first entry. */
+    wardCodes?: string[];
     permissionGrants?: string[];
     permissionRevokes?: string[];
     avatarMediaId?: string | null;
@@ -215,6 +233,8 @@ export async function createUser(
 ): Promise<PublicUser> {
   const id = randomUUID();
   const email = data.email.trim().toLowerCase();
+  const wardList = normalizeWards(data.wardCodes, data.wardCode);
+  const primaryWard = wardList[0] ?? null;
   const grants = sanitizeOverrides(data.permissionGrants, actor);
   const revokes = sanitizeOverrides(data.permissionRevokes, actor);
   const [passwordHash, sealed] = await Promise.all([
@@ -223,9 +243,9 @@ export async function createUser(
   ]);
 
   const res = await query<{ id: string }>(
-    `INSERT INTO users (id, email_bidx, password_hash, role, region_codes, ward_code, sealed_pii,
+    `INSERT INTO users (id, email_bidx, password_hash, role, region_codes, ward_code, ward_codes, sealed_pii,
                         permission_grants, permission_revokes, avatar_media_id, bio, title)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13)
      ON CONFLICT (email_bidx) DO NOTHING
      RETURNING id`,
     [
@@ -234,7 +254,8 @@ export async function createUser(
       passwordHash,
       data.role,
       data.regionCodes ?? [],
-      data.wardCode ?? null,
+      primaryWard,
+      wardList,
       JSON.stringify(sealed),
       grants,
       revokes,
@@ -266,6 +287,8 @@ export async function updateUser(
     email?: string;
     role?: string;
     wardCode?: string | null;
+    /** Full ward list; wardCode (primary) is re-derived from its first entry. */
+    wardCodes?: string[];
     regionCodes?: string[];
     isActive?: boolean;
     permissionGrants?: string[];
@@ -285,7 +308,11 @@ export async function updateUser(
   let idx = 1;
 
   if (data.role !== undefined) { sets.push(`role = $${idx++}`); params.push(data.role); }
-  if (data.wardCode !== undefined) { sets.push(`ward_code = $${idx++}`); params.push(data.wardCode); }
+  if (data.wardCode !== undefined || data.wardCodes !== undefined) {
+    const list = normalizeWards(data.wardCodes, data.wardCode);
+    sets.push(`ward_code = $${idx++}`); params.push(list[0] ?? null);
+    sets.push(`ward_codes = $${idx++}`); params.push(list);
+  }
   if (data.regionCodes !== undefined) { sets.push(`region_codes = $${idx++}`); params.push(data.regionCodes); }
   if (data.isActive !== undefined) { sets.push(`is_active = $${idx++}`); params.push(data.isActive); }
   if (data.avatarMediaId !== undefined) { sets.push(`avatar_media_id = $${idx++}`); params.push(data.avatarMediaId); }

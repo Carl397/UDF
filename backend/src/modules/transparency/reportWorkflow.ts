@@ -1,7 +1,7 @@
 import { query, withTransaction } from '../../db/pool.js';
 import { ApiError } from '../../http/errors.js';
 import { principalSeesWard } from '../../auth/scope.js';
-import { Permission, type Principal } from '../../auth/permissions.js';
+import { Permission, isNationalAdmin, type Principal } from '../../auth/permissions.js';
 import { openRecord, sealRecord } from '../../security/encryption.js';
 import { recordAudit } from '../../security/audit.js';
 import { notify } from '../notifications/service.js';
@@ -10,8 +10,8 @@ import type { UpdateResidentReport } from './schemas.js';
 import { liveReportStaff, staffNames } from './reportAccess.js';
 import { getReportManagementMetadata } from './reportManagement.js';
 
-const STAFF = ['national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'];
-const SUPERVISORS = ['national_admin', 'regional_organizer', 'local_coordinator'];
+const STAFF = ['superadmin', 'national_admin', 'regional_organizer', 'local_coordinator', 'ward_councillor'];
+const SUPERVISORS = ['superadmin', 'national_admin', 'regional_organizer', 'local_coordinator'];
 const STATUS_ACTION: Record<string, string> = { acknowledged: 'acknowledge', in_progress: 'follow_up', resolved: 'resolve', closed: 'close' };
 
 export function maskReference(value: string): string {
@@ -28,7 +28,7 @@ export async function reportWorkflowView(id: string, principal: Principal) {
   if (!r) throw ApiError.notFound('Report not found');
   const owner = r.user_id === principal.sub;
   const staff = STAFF.includes(principal.role) && principal.permissions?.includes(Permission.REPORT_READ)
-    && (principal.role === 'national_admin' || (!!r.ward_code && await principalSeesWard(principal, r.ward_code)));
+    && (isNationalAdmin(principal.role) || (!!r.ward_code && await principalSeesWard(principal, r.ward_code)));
   if (!owner && !staff) throw ApiError.forbidden('You do not have access to this report');
   const fullReference = owner || (staff && ((r.active_assignment && r.councillor_user_id === principal.sub) || SUPERVISORS.includes(principal.role)));
   const reference = fullReference && r.sealed_reference
@@ -66,7 +66,7 @@ export async function applyReportAction(id: string, input: UpdateResidentReport,
       FROM resident_reports WHERE id = $1 FOR UPDATE`, [id]);
     if (!r) throw ApiError.notFound('Report not found');
     const staff = STAFF.includes(principal.role) && principal.permissions?.includes(Permission.REPORT_READ)
-      && (principal.role === 'national_admin' || (!!r.ward_code && await principalSeesWard(principal, r.ward_code)));
+      && (isNationalAdmin(principal.role) || (!!r.ward_code && await principalSeesWard(principal, r.ward_code)));
     const owner = r.user_id === principal.sub;
     const action = input.action ?? (STATUS_ACTION[input.status ?? ''] ?? (input.internalNote && !input.feedback && !input.externalReference ? 'internal_note' : 'update'));
     const memberAction = action === 'confirm' || action === 'request_follow_up';

@@ -36,6 +36,22 @@ export interface Patrol {
   mediaCount?: number;
   /** The overview report's attachments, hydrated by `getPatrol` only. */
   media?: PatrolMedia[];
+  /**
+   * GPS-derived wards this patrol walked through, hydrated by `getPatrol` only.
+   * The patrol's own ward appears too; `crossing` flags the neighbouring wards
+   * it moved over into (ward_code differs from the patrol's ward).
+   */
+  wardEntries?: PatrolWardEntry[];
+}
+
+/** A ward a patrol's GPS track was resolved into, with first/last sighting. */
+export interface PatrolWardEntry {
+  wardCode: string;
+  wardName: string | null;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  pointCount: number;
+  crossing: boolean;
 }
 
 /** An attachment on the patrol overview report. */
@@ -129,21 +145,55 @@ async function assertPatrolWritable(patrolId: string, principal: Principal, acti
   }
 }
 
+/** A track point echo: its id plus the ward the fix resolved into (display). */
+export interface TrackPointResult {
+  id: string;
+  wardCode: string | null;
+  wardName: string | null;
+}
+
 export async function addTrackPoint(
   patrolId: string,
   input: z.infer<typeof addTrackPointSchema>,
   principal: Principal,
-): Promise<{ id: string }> {
+): Promise<TrackPointResult> {
   return withTransaction(async (client) => {
   const run = client.query.bind(client) as typeof query;
   await assertPatrolWritable(patrolId, principal, true, run);
+  // Resolve this fix against the ward geometry once; the same result drives the
+  // crossing record and the caller's live "which ward am I in" label.
+  const ward = await run<{ code: string; name: string }>(
+    `SELECT code, name FROM regions
+      WHERE level = 'ward' AND geom IS NOT NULL
+        AND ST_Intersects(geom, ST_SetSRID(ST_MakePoint($1, $2), 4326))
+      LIMIT 1`,
+    [input.longitude, input.latitude]);
+  const wardCode = ward.rows[0]?.code ?? null;
+  const wardName = ward.rows[0]?.name ?? null;
+
+  // Record the ward the patrol is standing in (its own ward included). A row
+  // whose ward_code differs from the patrol's is a crossing into a neighbouring
+  // ward. Best-effort: a fix outside any mapped ward records nothing.
+  const recordWard = async () => {
+    if (!wardCode) return;
+    await run(
+      `INSERT INTO patrol_ward_entries (patrol_id, ward_code, first_seen_at, last_seen_at, point_count)
+       VALUES ($1, $2, $3, $3, 1)
+       ON CONFLICT (patrol_id, ward_code)
+         DO UPDATE SET last_seen_at = GREATEST(patrol_ward_entries.last_seen_at, EXCLUDED.last_seen_at),
+                       point_count  = patrol_ward_entries.point_count + 1`,
+      [patrolId, wardCode, input.recordedAt],
+    );
+  };
+
   const previous = await run<{ id: string; same: boolean }>(
     `SELECT id, (recorded_at = $3 AND ST_Equals(location::geometry, ST_SetSRID(ST_MakePoint($4, $5), 4326))) AS same
      FROM patrol_track_points WHERE patrol_id = $1 AND seq = $2`,
     [patrolId, input.seq, input.recordedAt, input.longitude, input.latitude]);
   if (previous.rows[0]) {
     if (!previous.rows[0].same) throw ApiError.conflict('Track sequence already used; reload the patrol');
-    return { id: previous.rows[0].id };
+    await recordWard(); // a retried point must not lose its ward sighting
+    return { id: previous.rows[0].id, wardCode, wardName };
   }
 
   const res = await run<{ id: string }>(
@@ -155,7 +205,8 @@ export async function addTrackPoint(
   );
 
   if (res.rowCount === 0) throw ApiError.internal('Failed to add track point');
-  return res.rows[0]!;
+  await recordWard();
+  return { ...res.rows[0]!, wardCode, wardName };
   });
 }
 
@@ -389,6 +440,21 @@ export async function getPatrol(id: string, principal: Principal): Promise<Patro
     [id],
   );
   patrol.media = media.rows;
+  // Wards the track actually passed through, resolved from each fix's geometry.
+  // `crossing` marks a ward other than the patrol's own — the patrol moved over
+  // into a neighbour's territory.
+  const wardEntries = await query<PatrolWardEntry>(
+    `SELECT e.ward_code AS "wardCode", r.name AS "wardName",
+            e.first_seen_at AS "firstSeenAt", e.last_seen_at AS "lastSeenAt",
+            e.point_count AS "pointCount",
+            (e.ward_code IS DISTINCT FROM $2) AS crossing
+       FROM patrol_ward_entries e
+       LEFT JOIN regions r ON r.code = e.ward_code
+      WHERE e.patrol_id = $1
+      ORDER BY e.first_seen_at`,
+    [id, patrol.wardCode],
+  );
+  patrol.wardEntries = wardEntries.rows;
   const tracking = await query<{ nextTrackSeq: number; trackPointCount: number }>(
     `SELECT COALESCE(max(seq) + 1, 0)::int AS "nextTrackSeq", count(*)::int AS "trackPointCount"
      FROM patrol_track_points WHERE patrol_id = $1`, [id]);

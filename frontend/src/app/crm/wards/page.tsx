@@ -11,6 +11,13 @@ import {
  * case volumes, resolution rates and councillor assignments.
  */
 
+/**
+ * What the councillor column says for a ward no councillor account references.
+ * One constant so the table, the CSV export and the "nothing assigned" count can
+ * never drift into three different wordings of the same fact.
+ */
+const NO_CANDIDATE = 'No UDF candidate at LGE2026';
+
 interface WardRow {
   code: string;
   name: string;
@@ -19,6 +26,14 @@ interface WardRow {
   open: number;
   resolved: number;
   councillor: string;
+  /**
+   * False when no councillor account references this ward at all. After LGE2026
+   * that means UDF stood no candidate here, which is a fact about the election,
+   * not an admin task — unlike a linked account that is merely disabled or not
+   * yet published. Collapsing the two is what made this screen shout
+   * "Unassigned" about wards that were never ours to contest.
+   */
+  linked: boolean;
 }
 
 export default function CrmWards() {
@@ -48,15 +63,34 @@ export default function CrmWards() {
         caseStats.set(w, s);
       });
 
-      const councillorByWard = new Map<string, string>();
+      // A councillor is linked to EVERY ward they cover, not just their primary.
+      // `ward_codes` is the multi-ward list (migration 051); reading only
+      // `wardCode` here listed each councillor once and left three-quarters of
+      // the metro's wards claiming to have nobody assigned.
+      const councillorByWard = new Map<string, { label: string; active: boolean }>();
+      const contestedWards = new Set<string>();
       (councillors.items ?? []).forEach((u: any) => {
-        if (u.wardCode) councillorByWard.set(u.wardCode, u.email);
+        const codes: string[] = u.wardCodes?.length
+          ? u.wardCodes
+          : u.wardCode
+            ? [u.wardCode]
+            : [];
+        const active = u.isActive !== false;
+        const label = `${u.fullName || u.email || 'Councillor'}${active ? '' : ' (account disabled)'}`;
+        for (const code of codes) {
+          contestedWards.add(code);
+          const seen = councillorByWard.get(code);
+          // An active account wins the cell; a disabled one only shows where
+          // nothing better exists for that ward.
+          if (!seen || (active && !seen.active)) councillorByWard.set(code, { label, active });
+        }
       });
 
       const wardRows: WardRow[] = (geo.features ?? []).map((f: any) => {
         const code = f.properties?.code ?? f.id ?? 'UNKNOWN';
         const name = f.properties?.name ?? code;
         const cs = caseStats.get(code) ?? { total: 0, open: 0, resolved: 0 };
+        const linked = contestedWards.has(code);
         return {
           code,
           name,
@@ -64,7 +98,8 @@ export default function CrmWards() {
           cases: cs.total,
           open: cs.open,
           resolved: cs.resolved,
-          councillor: councillorByWard.get(code) ?? 'Unassigned',
+          councillor: councillorByWard.get(code)?.label ?? NO_CANDIDATE,
+          linked,
         };
       });
 
@@ -75,7 +110,10 @@ export default function CrmWards() {
 
   const totalMembers = rows.reduce((s, r) => s + r.members, 0);
   const totalCases = rows.reduce((s, r) => s + r.cases, 0);
-  const unassigned = rows.filter((r) => r.councillor === 'Unassigned').length;
+  // Not "wards needing an admin" — wards UDF never contested. Both LGE2026
+  // exceptions (Wards 61 and 66) are here, and the certified result cannot be
+  // edited, so this tile is a footnote about the election rather than a warning.
+  const uncontested = rows.filter((r) => !r.linked).length;
 
   return (
     <div>
@@ -102,7 +140,7 @@ export default function CrmWards() {
           { label: 'Wards', value: rows.length },
           { label: 'Members Mapped', value: totalMembers },
           { label: 'Cases Logged', value: totalCases },
-          { label: 'Wards Without Councillor', value: unassigned, tone: unassigned ? 'warn' : 'success' },
+          { label: 'Wards UDF Did Not Contest', value: uncontested },
         ]}
       />
 
@@ -118,9 +156,9 @@ export default function CrmWards() {
             r.open,
             r.resolved,
             r.cases ? `${Math.round((r.resolved / r.cases) * 100)}%` : '—',
-            r.councillor === 'Unassigned'
-              ? <span style={{ color: '#d97706' }}>Unassigned</span>
-              : r.councillor,
+            r.linked
+              ? r.councillor
+              : <span style={{ color: '#64748b' }} title="The certified LGE2026 candidate list has no UDF candidate for this ward.">{NO_CANDIDATE}</span>,
           ])}
           empty="No ward boundaries loaded."
         />

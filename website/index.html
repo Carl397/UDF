@@ -17,17 +17,19 @@
 
 <header class="site-header">
   <div class="wrap header-in">
-    <a class="brand" href="index.html">
+    <a class="brand" href="/">
       <img class="brand-mark" src="assets/img/udf-logo.png" alt="UDF Party logo: black flag with gold UDF letters on red">
       <span class="brand-name">United Democratic Front Party<small>udf-party.co.za</small></span>
     </a>
     <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav" aria-label="Toggle navigation"><span></span><span></span><span></span></button>
     <nav class="site-nav" id="site-nav" aria-label="Primary">
       <ul>
-        <li><a href="index.html" aria-current="page">Home</a></li>
-        <li><a href="housing-infrastructure.html">Housing &amp; Infrastructure</a></li>
-        <li><a href="safety-communities.html">Safety &amp; Communities</a></li>
-        <li><a href="economy-governance.html">Economy &amp; Governance</a></li>
+        <li><a href="/" aria-current="page">Home</a></li>
+        <li><a href="/housing-infrastructure">Housing &amp; Infrastructure</a></li>
+        <li><a href="/safety-communities">Safety &amp; Communities</a></li>
+        <li><a href="/economy-governance">Economy &amp; Governance</a></li>
+        <li><a href="/#councillors">Councillors</a></li>
+        <li><a href="/mobile">Mobile App</a></li>
         <li><a class="btn btn-gold btn-sm nav-cta" href="#vote">Vote UDF</a></li>
       </ul>
     </nav>
@@ -41,10 +43,10 @@
     <div class="wrap hero-in">
       <div>
         <span class="hero-kicker">Election Manifesto · Local Government 2026</span>
-        <h1>A <span class="hl">community-centric</span> plan for Cape Town's future</h1>
-        <p class="hero-lede">As a non-racial, non-sexist and all-inclusive party, we believe every decision must be community-centric and evidence-based, addressing root causes, redressing historical injustices, and creating meaningful improvements in the social, political and economic conditions of all.</p>
+        <h1 data-cms="marketing.home:heroTitle">A community-centric plan for Cape Town's future</h1>
+        <p class="hero-lede" data-cms="marketing.home:heroSubtitle">As a non-racial, non-sexist and all-inclusive party, we believe every decision must be community-centric and evidence-based, addressing root causes, redressing historical injustices, and creating meaningful improvements in the social, political and economic conditions of all.</p>
         <div class="hero-actions">
-          <a class="btn btn-gold" href="housing-infrastructure.html">Read the manifesto</a>
+          <a class="btn btn-gold" href="/housing-infrastructure" data-cms="marketing.home:ctaHref" data-cms-attr="href"><span data-cms="marketing.home:ctaLabel">Read the manifesto</span></a>
           <a class="btn btn-ghost" href="#leader">Meet the leader</a>
         </div>
       </div>
@@ -90,43 +92,43 @@
           <span class="card-num" aria-hidden="true">1</span>
           <h3>Housing</h3>
           <p>Housing as a means of giving back dignity, a tool for community-based economic growth, skills development and social change.</p>
-          <a class="card-link" href="housing-infrastructure.html#housing">Housing plan →</a>
+          <a class="card-link" href="/housing-infrastructure#housing">Housing plan →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">2</span>
           <h3>Public infrastructure</h3>
           <p>Infrastructure governed as a public good, not a commercial commodity: publicly owned, publicly controlled, publicly accountable.</p>
-          <a class="card-link" href="housing-infrastructure.html#principles">Infrastructure policy →</a>
+          <a class="card-link" href="/housing-infrastructure#principles">Infrastructure policy →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">3</span>
           <h3>Crime &amp; safety</h3>
           <p>Safety co-produced with communities: transparent policing, early intervention, social support and neighbourhood partnerships.</p>
-          <a class="card-link" href="safety-communities.html#policing">Safety manifesto →</a>
+          <a class="card-link" href="/safety-communities#policing">Safety manifesto →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">4</span>
           <h3>Economic empowerment</h3>
           <p>Broad-based worker ownership, community-centred procurement and employment equity based on regional demographics.</p>
-          <a class="card-link" href="economy-governance.html#bee">Empowerment plan →</a>
+          <a class="card-link" href="/economy-governance#bee">Empowerment plan →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">5</span>
           <h3>Accountable councillors</h3>
           <p>Enforceable performance agreements, clear KPAs and KPIs, and recall for non-performance: community interests above internal politics.</p>
-          <a class="card-link" href="economy-governance.html#councillors">Councillor accountability →</a>
+          <a class="card-link" href="/#councillors">Councillor accountability →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">6</span>
           <h3>Fair municipal finance</h3>
           <p>Balanced, geographically and per capita targeted budgets that correct historical backlogs without neglecting any community.</p>
-          <a class="card-link" href="economy-governance.html#finance">Municipal finance →</a>
+          <a class="card-link" href="/economy-governance#finance">Municipal finance →</a>
         </article>
         <article class="card reveal">
           <span class="card-num" aria-hidden="true">7</span>
           <h3>Women &amp; youth</h3>
           <p>Healing, protection and empowerment: from trauma to safety, skills, opportunity and economic independence.</p>
-          <a class="card-link" href="safety-communities.html#women-youth">Women &amp; youth →</a>
+          <a class="card-link" href="/safety-communities#women-youth">Women &amp; youth →</a>
         </article>
       </div>
     </div>
@@ -190,6 +192,151 @@
     </div>
   </section>
 
+  <!-- Ward councillors: the copy is editable in the CMS, the people are rows
+       managed on /crm/candidates. The cards below are the static fallback that
+       ships with the page (no-JS, pre-publish, CMS-down); udf-content.js
+       replaces the grid with the live roster, adding each photo and bio. -->
+  <section class="section section-alt anchor" id="councillors">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="kicker" data-cms="marketing.candidates:sectionKicker">Ward councillors</span>
+        <h2 data-cms="marketing.candidates:sectionTitle">Meet our ward councillors</h2>
+        <p class="lede" data-cms="marketing.candidates:sectionLede">The candidates standing for the United Democratic Front Party across Cape Town wards at Local Government 2026.</p>
+      </div>
+      <div class="council-grid" data-cms-candidates>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ANDHOR GREY MARKS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ANDHOR KARL MARKS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>MARK MINNIES</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>JOSEPH RICHARD NICHOLS NEFDT</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ROY STANLEY PRINSLOO</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>FATIMA SWARTZ</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ASHLEY CRAIG CLOETE</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ROGER STEVE ROMAN</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>RASHIED SOLOMONS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>RAYBIN THOMAS CHARLES WINDVOGEL</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>RONALD STEPHEN SIMONS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>LIONEL GODFREY SOLOMONS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>MICHAEL JACK POGGENPOEL</h3>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>MAHMOUD ESTERHUIZEN</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>JEFF MARIO THOMAS CHRISTIANS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>TREVOR LESLEY ISAAC JANTJES</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>SEAN FREDERICK NEFDT</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>AUBREY CHARLES ROBINSON</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>KENNITH PHILIP HOFFMAN</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>ANDRE CHRISTOPHER SAMPIE</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>DENVER DANIELS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>JEFFREY BOTHATA OLIPHANT</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>STEPHEN NOBLE</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>CHRISTOPHER VAN DER VENT</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>KAREN DAWN MAARMAN</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+        <article class="council-card reveal">
+          <div class="council-photo" aria-hidden="true"></div>
+          <h3>JACQUELINE WEAVER MARKS</h3>
+          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <!-- Vote / contact -->
   <section class="vote anchor" id="vote">
     <div class="wrap vote-in">
@@ -198,8 +345,8 @@
         <p>Evidence-based. Practical. Community-driven. Join us in building a resilient, safe and equitable Cape Town.</p>
       </div>
       <div class="contact-chips">
-        <a class="chip" href="mailto:jnefdt7@gmail.com">jnefdt7@gmail.com</a>
-        <a class="chip" href="tel:+27624426465">062 442 6465</a>
+        <a class="chip" href="mailto:Andy@udfp.co.za">Andy@udfp.co.za</a>
+        <a class="chip" href="tel:+27642522689">064 252 2689</a>
       </div>
     </div>
   </section>
@@ -216,18 +363,20 @@
     <div>
       <h3>Explore</h3>
       <ul class="footer-links">
-        <li><a href="index.html">Home</a></li>
-        <li><a href="housing-infrastructure.html">Housing &amp; Infrastructure</a></li>
-        <li><a href="safety-communities.html">Safety &amp; Communities</a></li>
-        <li><a href="economy-governance.html">Economy &amp; Governance</a></li>
+        <li><a href="/">Home</a></li>
+        <li><a href="/housing-infrastructure">Housing &amp; Infrastructure</a></li>
+        <li><a href="/safety-communities">Safety &amp; Communities</a></li>
+        <li><a href="/economy-governance">Economy &amp; Governance</a></li>
+        <li><a href="/#councillors">Ward councillors</a></li>
+        <li><a href="/mobile">Mobile App</a></li>
       </ul>
     </div>
     <div>
       <h3>Contact</h3>
       <ul class="footer-links">
-        <li><a href="mailto:jnefdt7@gmail.com">jnefdt7@gmail.com</a></li>
-        <li><a href="tel:+27624426465">062 442 6465</a></li>
-        <li><a href="index.html">udf-party.co.za</a></li>
+        <li><a href="mailto:Andy@udfp.co.za">Andy@udfp.co.za</a></li>
+        <li><a href="tel:+27642522689">064 252 2689</a></li>
+        <li><a href="/">udf-party.co.za</a></li>
       </ul>
     </div>
   </div>
@@ -237,6 +386,8 @@
   </div>
 </footer>
 
+<script src="assets/js/udf-analytics.js" data-site="marketing"></script>
+<script src="assets/js/udf-content.js" data-api="https://crm.udf-party.co.za/api"></script>
 <script src="assets/js/main.js"></script>
 </body>
 </html>

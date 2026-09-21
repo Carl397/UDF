@@ -18,7 +18,10 @@ import { TERMS_VERSION } from '../modules/public/content.js';
  *   SUPERADMIN_EMAIL         (required)  login email (stored sealed + blind-indexed)
  *   SUPERADMIN_PASSWORD      (required)  min 10 chars (argon2id-hashed)
  *   SUPERADMIN_NAME          (optional)  default "National Administrator"
- *   SUPERADMIN_ROLE          (optional)  default "national_admin"
+ *   SUPERADMIN_ROLE          (optional)  default "national_admin". Set to
+ *                                         "superadmin" for the platform owner —
+ *                                         a strict superset that also unlocks the
+ *                                         ops surface (platform/analytics/content).
  *   SUPERADMIN_REGION_CODES  (optional)  comma-separated; empty => national scope
  *   SUPERADMIN_WARD_CODE     (optional)  ward scope for a ward-level admin
  *

@@ -48,6 +48,7 @@ import Logo from './Logo';
  * desktop role open this screen?") stay separately answerable.
  */
 const DESKTOP_ROLES: readonly Role[] = [
+  'superadmin',
   'national_admin',
   'regional_organizer',
   'ward_councillor',
@@ -177,6 +178,18 @@ const NAV_SECTIONS: {
       { href: '/crm/audit', label: 'Audit Log', icon: 'audit', permission: Perm.AUDIT_READ },
       { href: '/crm/reports', label: 'Reports', icon: 'reports', permission: Perm.REPORT_GENERATE },
       { href: '/crm/settings', label: 'Settings', icon: 'settings', permission: Perm.ROLE_MANAGE },
+    ],
+  },
+  {
+    label: 'Platform',
+    items: [
+      { href: '/crm/platform', label: 'Ops Overview', icon: 'dashboard', permission: Perm.PLATFORM_READ },
+      { href: '/crm/website-analytics', label: 'Website Analytics', icon: 'analytics', permission: Perm.ANALYTICS_READ },
+      { href: '/crm/downloads', label: 'App Downloads', icon: 'analytics', permission: Perm.ANALYTICS_READ },
+      { href: '/crm/website', label: 'Website Content', icon: 'settings', permission: Perm.CONTENT_MANAGE },
+      // The public homepage's "Meet our ward councillors" roster — published
+      // website content, so it sits with the editor under the same gate.
+      { href: '/crm/candidates', label: 'Ward Councillors', icon: 'members', permission: Perm.CONTENT_MANAGE },
     ],
   },
 ];
@@ -624,7 +637,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     if (!next) return;
     setAlertsLoading(true);
     try {
-      const r = await api.listNotifications({ limit: ALERT_LIMIT });
+      const r = await api.listNotifications({ unread: true, limit: ALERT_LIMIT });
       setAlerts(r.items);
       // The list carries the authoritative count, so opening the panel also
       // corrects a badge that has gone stale since the page loaded.
@@ -637,19 +650,22 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
   }
 
   /**
-   * Mark one alert read, and close the panel if the row is about to navigate.
+   * Mark one alert read, clear it from the bell, and close the panel if the row
+   * is about to navigate.
    *
-   * Read-state is cosmetic and the navigation is the point of the click, so a
-   * failed `markNotificationRead` must never swallow it. The count is decremented
-   * locally rather than re-fetched: one round trip per click on a panel whose
-   * only job is to be cheap.
+   * The bell panel is an unread queue, so a message disappears the moment it is
+   * read; the durable history stays in the Notification Centre, which lists
+   * every message (read included). Read-state is cosmetic and the navigation is
+   * the point of the click, so a failed `markNotificationRead` must never
+   * swallow it. The count is decremented locally rather than re-fetched: one
+   * round trip per click on a panel whose only job is to be cheap.
    */
   async function openAlert(n: AppNotification) {
     if (desktopHref(n.link)) setShowNotifications(false);
     if (n.read) return;
     try {
       await api.markNotificationRead(n.id);
-      setAlerts((list) => list?.map((x) => (x.id === n.id ? { ...x, read: true } : x)) ?? null);
+      setAlerts((list) => list?.filter((x) => x.id !== n.id) ?? null);
       setUnread((c) => (c === null || c <= 0 ? c : c - 1));
     } catch {
       /* non-fatal */
@@ -659,7 +675,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
   async function readAllAlerts() {
     try {
       await api.markAllNotificationsRead();
-      setAlerts((list) => list?.map((x) => ({ ...x, read: true })) ?? null);
+      setAlerts([]); // the unread queue empties; the archive keeps the read messages
       setUnread(0);
     } catch {
       /* non-fatal */

@@ -168,6 +168,28 @@ router.get(
 );
 
 /**
+ * Validate a ward-code list against `regions` (the new TEXT[] columns have no
+ * FK). Throws listing every unknown code so the CRM shows one clear error.
+ */
+async function assertKnownWards(wardCodes: unknown): Promise<string[] | undefined> {
+  if (wardCodes === undefined) return undefined;
+  const list = Array.isArray(wardCodes)
+    ? wardCodes.map((x) => String(x ?? '').trim()).filter(Boolean)
+    : [];
+  if (!list.length) return list;
+  const res = await query<{ code: string }>(
+    `SELECT code FROM regions WHERE code = ANY($1) AND level = 'ward'`,
+    [[...new Set(list)]],
+  );
+  const known = new Set(res.rows.map((r) => r.code));
+  const unknown = [...new Set(list)].filter((c) => !known.has(c));
+  if (unknown.length) {
+    throw new Error(`unknown ward code${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
+  }
+  return list;
+}
+
+/**
  * POST /crm/users
  * Create a new system user.
  */
@@ -176,16 +198,24 @@ router.post(
   requirePermission(Permission.ROLE_MANAGE),
   asyncHandler(async (req, res) => {
     const {
-      email, password, role, fullName, regionCodes, wardCode,
+      email, password, role, fullName, regionCodes, wardCode, wardCodes,
       permissionGrants, permissionRevokes, avatarMediaId, bio, title,
     } = req.body;
     if (!email || !password || !role) {
       res.status(400).json({ error: 'email, password, and role are required' });
       return;
     }
+    let normalizedWards;
+    try {
+      normalizedWards = await assertKnownWards(wardCodes);
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? 'invalid ward codes' });
+      return;
+    }
     const user = await userService.createUser(
       {
         email, password, role, fullName, regionCodes, wardCode,
+        wardCodes: normalizedWards,
         permissionGrants, permissionRevokes, avatarMediaId, bio, title,
       },
       actorOf(req),
@@ -281,13 +311,20 @@ router.patch(
   requirePermission(Permission.ROLE_MANAGE),
   asyncHandler(async (req, res) => {
     const {
-      email, role, wardCode, regionCodes, isActive,
+      email, role, wardCode, wardCodes, regionCodes, isActive,
       permissionGrants, permissionRevokes, avatarMediaId, bio, title,
     } = req.body;
+    let normalizedWards;
+    try {
+      normalizedWards = await assertKnownWards(wardCodes);
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? 'invalid ward codes' });
+      return;
+    }
     const user = await userService.updateUser(
       req.params.id as string,
       {
-        email, role, wardCode, regionCodes, isActive,
+        email, role, wardCode, wardCodes: normalizedWards, regionCodes, isActive,
         permissionGrants, permissionRevokes, avatarMediaId, bio, title,
       },
       actorOf(req),

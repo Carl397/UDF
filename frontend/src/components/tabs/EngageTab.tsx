@@ -60,6 +60,9 @@ export default function EngageTab() {
   const [events, setEvents] = useState<PartyEvent[] | null>(null);
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [notes, setNotes] = useState<AppNotification[] | null>(null);
+  // The Alerts list is an unread queue that clears as you read; this toggle
+  // reaches back into the read archive (nothing is deleted server-side).
+  const [showRead, setShowRead] = useState(false);
   const [past, setPast] = useState(false);
   const [apptFilter, setApptFilter] = useState<'all' | 'proposed' | 'confirmed'>('all');
   const [openEvent, setOpenEvent] = useState<PartyEvent | null | undefined>(undefined);
@@ -434,20 +437,40 @@ export default function EngageTab() {
             <span className="hint-text" style={{ margin: 0 }}>
               {notes?.filter((n) => !n.read).length ?? 0} unread
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={markAll}>
-              <Icon name="check" size={15} /> Mark all read
-            </button>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {/* Read alerts drop out of the default view but stay reachable. */}
+              {notes !== null && notes.some((n) => n.read) && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowRead((v) => !v)}>
+                  {showRead ? 'Hide read' : 'Show read'}
+                </button>
+              )}
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={markAll}
+                disabled={!notes?.some((n) => !n.read)}
+              >
+                <Icon name="check" size={15} /> Mark all read
+              </button>
+            </span>
           </div>
 
           {notes === null ? (
             <div className="skeleton" style={{ height: 64, marginTop: 10 }} />
-          ) : notes.length === 0 ? (
+          ) : (showRead ? notes : notes.filter((n) => !n.read)).length === 0 ? (
             <div className="card" style={{ marginTop: 10 }}>
-              <EmptyState icon="bell" title="No notifications" hint="Alerts land here when events, press or mandates move." />
+              {notes.length === 0 ? (
+                <EmptyState icon="bell" title="No notifications" hint="Alerts land here when events, press or mandates move." />
+              ) : (
+                <EmptyState
+                  icon="bell"
+                  title="All caught up"
+                  hint="You have read everything. Use Show read to revisit past alerts."
+                />
+              )}
             </div>
           ) : (
             <div className="rows" style={{ marginTop: 10 }}>
-              {notes.map((n) => (
+              {(showRead ? notes : notes.filter((n) => !n.read)).map((n) => (
                 <button key={n.id} className={`row notif ${n.read ? '' : 'unread'}`} onClick={() => markRead(n)}>
                   <span className="row-ico">
                     <Icon name={NOTE_ICON[n.kind] ?? 'bell'} />
@@ -580,7 +603,13 @@ export default function EngageTab() {
                       {p.mediaCount ? ` · ${p.mediaCount} attached` : ''}
                     </span>
                   </span>
-                  <span className={`badge ${p.status === 'completed' ? 'ok' : p.status === 'active' ? 'warn' : ''}`}>{p.status}</span>
+                  {p.status === 'active' ? (
+                    <span className="badge ok">
+                      <span className="dot ok" style={{ display: 'inline-block', marginRight: 6, verticalAlign: 'middle' }} />LIVE
+                    </span>
+                  ) : (
+                    <span className={`badge ${p.status === 'completed' ? 'ok' : ''}`}>{p.status}</span>
+                  )}
                 </button>
               ))}
             </div>

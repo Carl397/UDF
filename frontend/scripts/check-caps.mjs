@@ -102,6 +102,38 @@ const backendPerms = stringPairs(
   constBlock(backend, 'export const Permission = \\{', ' as const;', 'permissions.ts'),
 );
 
+/**
+ * Resolve the `Permission.X` tokens and any `...NAME` spread in an expression
+ * segment to a Set of concrete permission values. `NAME` refers to a shared
+ * `readonly Permission[]` const (see `constPerms` below) so a role that extends
+ * one — e.g. `superadmin` spreading the national-admin set — is still parsed to
+ * the FULL set it actually holds, not just the extra permissions written inline.
+ */
+function resolvePermRefs(segment, ctx) {
+  const set = new Set();
+  for (const s of segment.matchAll(/\.\.\.([A-Z][A-Z0-9_]*)/g)) {
+    const base = constPerms.get(s[1]);
+    if (!base) {
+      fatal.push(`permissions.ts: ${ctx} spreads ${s[1]}, which is not a known \`readonly Permission[]\` const`);
+      continue;
+    }
+    for (const v of base) set.add(v);
+  }
+  for (const p of segment.matchAll(/Permission\.([A-Z][A-Z0-9_]*)/g)) {
+    const value = backendPerms.get(p[1]);
+    if (!value) fatal.push(`permissions.ts: Permission.${p[1]} is granted (${ctx}) but not defined`);
+    else set.add(value);
+  }
+  return set;
+}
+
+// Named permission-set consts (e.g. NATIONAL_ADMIN_PERMISSIONS), so both a role
+// that references one directly and one that extends it via spread resolve fully.
+const constPerms = new Map();
+for (const m of backend.matchAll(/const ([A-Z][A-Z0-9_]*)\s*:\s*readonly Permission\[\]\s*=\s*\[([\s\S]*?)\];/g)) {
+  constPerms.set(m[1], resolvePermRefs(m[2], `${m[1]} const`));
+}
+
 /** role string → Set<permission string> */
 const rolePerms = new Map();
 const matrixBody = constBlock(
@@ -110,17 +142,24 @@ const matrixBody = constBlock(
   ';',
   'permissions.ts',
 );
-for (const m of matrixBody.matchAll(/\[Role\.([A-Z][A-Z0-9_]*)\]:\s*\[([\s\S]*?)\]/g)) {
+for (const m of matrixBody.matchAll(/\[Role\.([A-Z][A-Z0-9_]*)\]:\s*(\[[\s\S]*?\]|[A-Z][A-Z0-9_]*)/g)) {
   const role = roleNames.get(m[1]);
   if (!role) {
     fatal.push(`permissions.ts: ROLE_PERMISSIONS references Role.${m[1]}, which the Role enum does not define`);
     continue;
   }
-  const held = new Set();
-  for (const p of m[2].matchAll(/Permission\.([A-Z][A-Z0-9_]*)/g)) {
-    const value = backendPerms.get(p[1]);
-    if (!value) fatal.push(`permissions.ts: Permission.${p[1]} is granted to ${role} but not defined`);
-    else held.add(value);
+  let held;
+  if (m[2].startsWith('[')) {
+    held = resolvePermRefs(m[2], `role ${role}`);
+  } else {
+    // A role whose value is a bare shared const (`[Role.X]: SOME_PERMISSIONS`).
+    const base = constPerms.get(m[2]);
+    if (!base) {
+      fatal.push(`permissions.ts: role ${role} references ${m[2]}, which is not a known \`readonly Permission[]\` const`);
+      held = new Set();
+    } else {
+      held = new Set(base);
+    }
   }
   rolePerms.set(role, held);
 }
@@ -496,7 +535,7 @@ function screensFor(role) {
 const screensByRole = new Map();
 for (const role of rolePerms.keys()) screensByRole.set(role, new Set(screensFor(role)));
 
-const DESKTOP = ['national_admin', 'regional_organizer', 'ward_councillor'];
+const DESKTOP = ['superadmin', 'national_admin', 'regional_organizer', 'ward_councillor'];
 
 /**
  * Nav pins. Deliberately not all 26 rows — a full copy of the gate table would
@@ -506,14 +545,31 @@ const DESKTOP = ['national_admin', 'regional_organizer', 'ward_councillor'];
  * entitled to.
  */
 const NAV_PINS = [
-  // Structural: national_admin holds all 35 permissions, so a screen missing
-  // from its nav is a mistyped Perm key rather than an authorisation decision.
+  // Structural: superadmin holds every permission (national_admin plus the
+  // platform trio), so a screen IT cannot see is a mistyped Perm key rather than
+  // an authorisation decision. national_admin is deliberately excluded from this
+  // pin: the Platform screens are superadmin-only by design, so national_admin
+  // legitimately does NOT see all of them (pinned false further down).
   {
     all: true,
-    role: 'national_admin',
+    role: 'superadmin',
     expect: true,
-    why: 'national_admin holds every permission — a screen it cannot see is a gate typo, not a policy',
+    why: 'superadmin holds every permission — a screen it cannot see is a gate typo, not a policy',
   },
+  // The Platform ops surface is superadmin-only: national_admin (the political
+  // top role) must NOT reach server/cron/live status, first-party analytics or
+  // the website editor. These pins fire if the trio is ever widened upward.
+  { href: '/crm/platform', role: 'national_admin', expect: false, why: 'platform:read is superadmin-only — server/cron/live ops is not exposed to a political national admin' },
+  { href: '/crm/website-analytics', role: 'national_admin', expect: false, why: 'analytics:read is superadmin-only' },
+  { href: '/crm/downloads', role: 'national_admin', expect: false, why: 'analytics:read is superadmin-only' },
+  { href: '/crm/website', role: 'national_admin', expect: false, why: 'content:manage is superadmin-only — the website editor is not a national_admin surface' },
+  { href: '/crm/platform', role: 'superadmin', expect: true, why: 'superadmin holds platform:read — the ops overview is its primary screen' },
+  { href: '/crm/website', role: 'superadmin', expect: true, why: 'superadmin holds content:manage — the website editor' },
+  // The public homepage's councillor roster is edited through the same gate as
+  // the editor, and for the same reason: it is published site content, not a
+  // territory record. These fire if content:manage is ever handed downward.
+  { href: '/crm/candidates', role: 'national_admin', expect: false, why: 'content:manage is superadmin-only — the public councillor roster is not a national_admin surface' },
+  { href: '/crm/candidates', role: 'superadmin', expect: true, why: 'superadmin holds content:manage — it edits the public councillor roster' },
   { href: '/crm/audit', role: 'regional_organizer', expect: false, why: 'D4: audit:read is national-only; the audit log is the whole platform\'s activity history' },
   { href: '/crm/audit', role: 'ward_councillor', expect: false, why: 'D4: audit:read is national-only' },
   { href: '/crm/users', role: 'regional_organizer', expect: false, why: 'role:manage is national-only; this screen reassigns roles and resets passwords' },
@@ -1005,6 +1061,7 @@ console.log(`caps:check — ${backendPerms.size} permissions, ${roles.length} ro
 // Capability-major, not role-major: the capability names are the long axis and
 // initials alone would be ambiguous (caseLog/caseUpdate, the three job caps).
 const SHORT = {
+  superadmin: 'superadmin',
   national_admin: 'admin',
   regional_organizer: 'regional',
   local_coordinator: 'coordinator',

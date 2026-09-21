@@ -2537,6 +2537,12 @@ button.banner.alert-strip span:nth-child(2) { flex: 1; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* The map owns its height now (see `.udf-map-frame`), so the column has to
+     scroll instead of squeezing it. `contain` keeps a flick at the end of the
+     map's scroll from chaining into the app shell behind it. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Layer switch: Region / Subcouncil / Ward. */
@@ -2568,9 +2574,37 @@ button.banner.alert-strip span:nth-child(2) { flex: 1; }
    ratio is set inline from the map's own bounds so the SVG can fill it
    absolutely and the viewBox can pan/zoom without ever resizing the container.
    `touch-action: none` hands every touch to the pan/pinch handlers instead of
-   letting the page scroll swallow them. */
+   letting the page scroll swallow them.
+
+   WIDTH, not stretch: the metro boundary asset is PORTRAIT (~0.66 wide : tall),
+   so a frame that fills a phone pane's width wants to be taller than the pane.
+   Left to stretch in the flex column it used to be squeezed instead, and because
+   the SVG is `preserveAspectRatio="… meet"` a squeezed frame shrinks the
+   GEOGRAPHY to fit the reduced height and pads the sides — the map rendered at
+   roughly three quarters of the available width inside a full-width white box,
+   which is what read as "the map is too small". Capping the width by the height
+   the viewport can afford (× the map's own aspect, passed in as
+   `--udf-map-aspect`) keeps the frame and the viewBox the same shape, so every
+   pixel of it is map, and `flex: none` stops the column crushing it. The
+   readout below simply scrolls into view.
+
+   The budget is the SPACE THE MAP ACTUALLY HAS, not a flat share of the
+   viewport: 100dvh minus the app chrome (~166px of header, ward button and tab
+   bar) minus the 54px layer row the frame sits under. Measured at 618x766, a
+   plain `80dvh` made the frame 612.8px tall inside a 600.5px pane that already
+   had 54px spent above it — the bottom 66px of the map was scrolled out of view,
+   which cut off the ◎ locate and ⤢ reset buttons pinned to the frame's bottom
+   edge, and the reset control in particular was unreachable until the reader
+   worked out that the map itself scrolls. `clamp` keeps a short viewport from
+   collapsing the map to a stamp: 240px wide (366px tall) is the floor, and
+   `100%` is the ceiling, so on a narrow phone the width binds and there is no
+   overflow at all. `vh` first, `dvh` where supported. */
 .udf-map-frame {
   position: relative;
+  flex: none;
+  width: clamp(240px, calc((100vh - 220px) * var(--udf-map-aspect, 0.66)), 100%);
+  width: clamp(240px, calc((100dvh - 220px) * var(--udf-map-aspect, 0.66)), 100%);
+  margin-inline: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fff;
@@ -2656,6 +2690,13 @@ button.banner.alert-strip span:nth-child(2) { flex: 1; }
   color: var(--text-3);
   cursor: default;
 }
+/* Follow-me is a MODE, not a moment: while it is lit, the readout under the map
+   describes where the reader is standing, and a tap on any shape turns it off. */
+.udf-map-locate.on {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
 
 .udf-map-status {
   min-height: 18px;
@@ -2667,6 +2708,10 @@ button.banner.alert-strip span:nth-child(2) { flex: 1; }
 }
 .udf-map-status-idle {
   color: var(--text-3);
+}
+.udf-map-status-follow {
+  color: var(--text-3);
+  font-size: 11.5px;
 }
 
 /* ── Static map: place readout ──────────────────────────────────────────────

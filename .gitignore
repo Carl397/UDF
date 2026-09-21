@@ -19,11 +19,15 @@ deploy/.audit-snapshots/
 # Capacitor / Android (generated native project + APK outputs)
 frontend/android/
 frontend/ios/
+# UDF secure-mail wrapper (com.udf.mail): the generated native project is
+# recreated by `cap add` and re-hardened by mailapp/scripts/prepare-android-assets.mjs.
+mailapp/android/
 *.apk
 *.aab
 # …but the tracked native-hardening overrides ARE committed and re-applied
 # after `cap add` by frontend/scripts/prepare-android-assets.mjs:
 !frontend/android-overrides/
+!mailapp/android-overrides/
 
 # Env & secrets — NEVER commit real keys
 .env

@@ -46,6 +46,10 @@ transparencyRouter.get('/wards/councillor', async (req, res, next) => {
       accurate: accuracyM == null || accuracyM <= 5,
       councillor: overview?.councillor ?? null,
       vacant: overview?.vacant ?? true,
+      // Whether UDF stood a candidate here at all. `vacant` alone cannot tell a
+      // seat that is waiting to be filled from a ward the party never contested,
+      // and the two need different sentences on screen.
+      contested: overview?.contested ?? false,
       overview,
     });
   } catch (err) { next(err); }
