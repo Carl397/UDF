@@ -5,6 +5,8 @@ import { useAuth } from '../../lib/auth';
 import { loadPrefs, savePrefs, type Prefs } from '../../lib/prefs';
 import { useShell } from '../AppShell';
 import { Icon, Toggle, useToast } from '../ui';
+import WardSettings from './WardSettings';
+import { useAppUpdate } from '../AppUpdateProvider';
 
 const ROLE_LABEL: Record<string, string> = {
   national_admin: 'National Admin',
@@ -14,9 +16,8 @@ const ROLE_LABEL: Record<string, string> = {
   member: 'Member',
 };
 
-const APP_VERSION = '1.0.0';
-
 export default function SettingsTab() {
+  const updateInfo = useAppUpdate();
   const { email, role, regionCodes, logout } = useAuth();
   const { unread, open } = useShell();
   const toast = useToast();
@@ -48,6 +49,8 @@ export default function SettingsTab() {
           <span className="badge tier">{role ?? '—'}</span>
         </div>
       </div>
+
+      {role === 'member' && <WardSettings />}
 
       {/* Notifications */}
       <div className="section-label">Notifications</div>
@@ -87,10 +90,17 @@ export default function SettingsTab() {
           <span className="row-ico"><Icon name="info" /></span>
           <span className="row-main">
             <span className="row-title">UDF Party</span>
-            <span className="row-sub">Version {APP_VERSION} · build mobile-web</span>
+            <span className="row-sub">{updateInfo.native ? updateInfo.build ? `Version ${updateInfo.version} · build ${updateInfo.build}` : 'Loading installed version…' : 'Mobile web'}</span>
           </span>
         </div>
       </div>
+
+      {updateInfo.native && <div className="card">
+        <button type="button" className="btn btn-ghost" disabled={updateInfo.busy || !updateInfo.build} onClick={updateInfo.check}>
+          {updateInfo.busy ? 'Checking…' : 'Check for updates'}
+        </button>
+        {updateInfo.message && <p role="status">{updateInfo.message}</p>}
+      </div>}
 
       {/* Sign out */}
       <div style={{ marginTop: 18 }}>

@@ -120,12 +120,14 @@ export const Perm = {
   PLATFORM_READ: 'platform:read',
   ANALYTICS_READ: 'analytics:read',
   CONTENT_MANAGE: 'content:manage',
+  APP_RELEASE_MANAGE: 'app_release:manage',
 } as const;
 
 export type PermName = (typeof Perm)[keyof typeof Perm];
 
 /** Every permission label names its action and subject, even outside a group. */
 const PERMISSION_LABELS: Record<PermName, string> = {
+  [Perm.APP_RELEASE_MANAGE]: 'Publish and withdraw Android update notices',
   [Perm.MEMBER_READ]: 'View member records',
   [Perm.MEMBER_WRITE]: 'Create and edit member records',
   [Perm.MEMBER_DELETE]: 'Delete member records',

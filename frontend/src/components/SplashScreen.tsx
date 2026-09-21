@@ -25,6 +25,7 @@ export default function SplashScreen() {
   return (
     <div
       aria-hidden="true"
+      data-app-splash
       style={{
         position: 'fixed',
         inset: 0,

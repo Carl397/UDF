@@ -198,6 +198,11 @@ export async function updateMember(
   const existing = await repo.findMemberById(id, scope);
   if (!existing) throw ApiError.notFound('Member not found');
 
+  // Even an explicit member:write grant must not bypass the self-service cap.
+  if (actor.principal.role === 'member' && input.ward !== undefined && input.ward !== existing.ward) {
+    throw ApiError.forbidden('Use the registered-ward setting to change your ward');
+  }
+
   // Moving a member between wards or regions is a write into the DESTINATION as
   // well as the source. Checking only the source let a ward official push a
   // member into a ward they do not represent — out of their own view and into

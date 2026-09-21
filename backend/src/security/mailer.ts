@@ -25,8 +25,8 @@ import { blindIndex } from './blindIndex.js';
  */
 
 export interface EmailAttachment {
-  /** Referenced from the HTML body as `cid:<cid>`. */
-  cid: string;
+  /** Referenced from the HTML body as `cid:<cid>`; omit for downloadable files. */
+  cid?: string;
   filename: string;
   contentType: string;
   buffer: Buffer;
@@ -65,7 +65,7 @@ function base64Wrapped(buf: Buffer): string {
 }
 
 /** Build the full RFC-5322 message (headers + body) for the email. */
-function buildMessage(msg: EmailMessage): string {
+export function buildMessage(msg: EmailMessage): string {
   const from = env.MAIL_FROM;
   const messageId = `<${randomUUID()}@${from.match(/@([^>]+)>?/)?.[1] ?? hostname()}>`;
   const date = new Date().toUTCString().replace('GMT', '+0000');
@@ -95,33 +95,40 @@ function buildMessage(msg: EmailMessage): string {
     `--${altBoundary}--`,
   ].join(CRLF);
 
-  if (attachments.length === 0) {
-    headers.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
-    return headers.join(CRLF) + CRLF + CRLF + alternative + CRLF;
-  }
-
-  // With inline images: multipart/related wrapping the alternative + each image.
-  const relBoundary = `rel_${randomUUID().replace(/-/g, '')}`;
-  const parts: string[] = [
-    `--${relBoundary}`,
-    `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+  const inline = attachments.filter((att) => att.cid);
+  const files = attachments.filter((att) => !att.cid);
+  const attachmentPart = (att: EmailAttachment): string => [
+    `Content-Type: ${att.contentType}; name="${att.filename}"`,
+    'Content-Transfer-Encoding: base64',
+    ...(att.cid ? [`Content-ID: <${att.cid}>`] : []),
+    `Content-Disposition: ${att.cid ? 'inline' : 'attachment'}; filename="${att.filename}"`,
     '',
-    alternative,
-  ];
-  for (const att of attachments) {
-    parts.push(
-      `--${relBoundary}`,
-      `Content-Type: ${att.contentType}; name="${att.filename}"`,
-      'Content-Transfer-Encoding: base64',
-      `Content-ID: <${att.cid}>`,
-      `Content-Disposition: inline; filename="${att.filename}"`,
-      '',
-      base64Wrapped(att.buffer),
-    );
+    base64Wrapped(att.buffer),
+  ].join(CRLF);
+
+  let contentType = `multipart/alternative; boundary="${altBoundary}"`;
+  let body = alternative;
+  if (inline.length) {
+    const relBoundary = `rel_${randomUUID().replace(/-/g, '')}`;
+    body = [
+      `--${relBoundary}`, `Content-Type: ${contentType}`, '', body,
+      ...inline.flatMap((att) => [`--${relBoundary}`, attachmentPart(att)]),
+      `--${relBoundary}--`,
+    ].join(CRLF);
+    contentType = `multipart/related; boundary="${relBoundary}"`;
   }
-  parts.push(`--${relBoundary}--`);
-  headers.push(`Content-Type: multipart/related; boundary="${relBoundary}"`);
-  return headers.join(CRLF) + CRLF + CRLF + parts.join(CRLF) + CRLF;
+  if (files.length) {
+    // Downloadable PDFs are siblings of the related body, not inline images.
+    const mixedBoundary = `mixed_${randomUUID().replace(/-/g, '')}`;
+    body = [
+      `--${mixedBoundary}`, `Content-Type: ${contentType}`, '', body,
+      ...files.flatMap((att) => [`--${mixedBoundary}`, attachmentPart(att)]),
+      `--${mixedBoundary}--`,
+    ].join(CRLF);
+    contentType = `multipart/mixed; boundary="${mixedBoundary}"`;
+  }
+  headers.push(`Content-Type: ${contentType}`);
+  return headers.join(CRLF) + CRLF + CRLF + body + CRLF;
 }
 
 /** Byte-stuff leading dots so a body line "." cannot end DATA early (RFC-5321). */

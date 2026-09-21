@@ -37,6 +37,9 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
 
     const res = await query<{
       is_active: boolean;
+      role: Role;
+      region_codes: string[];
+      ward_code: string | null;
       token_version: number;
       moderation_status: string;
       suspended_until: string | null;
@@ -44,7 +47,7 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
       permission_revokes: string[] | null;
       disabled_modules: string[] | null;
     }>(
-      `SELECT is_active, token_version, moderation_status, suspended_until,
+      `SELECT is_active, role, region_codes, ward_code, token_version, moderation_status, suspended_until,
               permission_grants, permission_revokes,
               COALESCE((SELECT array_agg(g.module_key)
                           FROM role_module_gates g
@@ -68,19 +71,22 @@ export const authenticate: RequestHandler = async (req, _res, next) => {
 
     const disabledModules = u.disabled_modules ?? [];
     const disabledSet = new Set(disabledModules);
+    // Ward changes take effect on the next request, including requests carrying
+    // an otherwise-valid token minted before the change. Old scope must not
+    // retain access to the previous ward's restricted detail.
     req.principal = {
       sub: claims.sub,
-      role: claims.role,
-      regionCodes: claims.regionCodes,
-      wardCode: claims.wardCode,
+      role: u.role,
+      regionCodes: u.region_codes,
+      wardCode: u.ward_code ?? undefined,
       email: claims.email,
       permissions: effectivePermissions(
-        claims.role as Role,
+        u.role,
         u.permission_grants,
         u.permission_revokes,
         disabledModules,
       ),
-      enabledModules: modulesForRole(claims.role as Role).filter(
+      enabledModules: modulesForRole(u.role).filter(
         (key) => !disabledSet.has(key),
       ),
     };

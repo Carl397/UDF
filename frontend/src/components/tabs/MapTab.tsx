@@ -47,6 +47,7 @@ function FullMapTab() {
     <>
       <div className="map-pane">
         <UdfStaticMap
+          scrollCue
           initialLayer="region"
           onSelect={({ code }) => setRegion(code)}
         />

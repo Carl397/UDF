@@ -51,11 +51,13 @@ def inspect():
     }
 
 
-def verify_release():
+def verify_release(update_release=False):
+    """Keep historical 1.0.2 verification; updates independently checks 1.0.6."""
+    code, version = (7, '1.0.6') if update_release else (3, '1.0.2')
     info = inspect()
     if (info['applicationId'], info['versionCode'], info['versionName'], info['debuggable']) != (
-            'com.udf.party', 3, '1.0.2', False):
-        raise RuntimeError('Expected non-debuggable release com.udf.party 1.0.2 (3)')
+            'com.udf.party', code, version, False):
+        raise RuntimeError(f'Expected non-debuggable release com.udf.party {version} ({code})')
     badging = command(str(TOOLS / 'aapt'), 'dump', 'badging', str(APK))
     if "targetSdkVersion:'36'" not in badging:
         raise RuntimeError('Release must target API 36')
@@ -67,6 +69,23 @@ def verify_release():
                        '-noout', '-fingerprint', '-sha256').strip().split('=')[-1].replace(':', '').lower()
     if info['signerCertificateSha256'] != [expected]:
         raise RuntimeError('APK signer differs from the approved upload certificate')
+    if update_release:
+        baseline_hash = '127f9b07b03831e8854e1819f2cb97091e9e5c00c30988634b8cfb77226c52b1'
+        incumbent = ROOT / '.tmp-verify/app-update-baseline' / f'udf-6-{baseline_hash}.apk'
+        if sha(incumbent.read_bytes()) != baseline_hash:
+            raise RuntimeError('Approved incumbent APK not preserved')
+        old_badging = command(str(TOOLS / 'aapt'), 'dump', 'badging', str(incumbent))
+        old_signing = command(str(TOOLS / 'apksigner'), 'verify', '--print-certs', str(incumbent))
+        if re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-f]+)', old_signing) != [expected]:
+            raise RuntimeError('Upgrade signer differs from incumbent')
+        permissions = set(re.findall(r"uses-permission: name='([^']+)'", badging))
+        if permissions != set(re.findall(r"uses-permission: name='([^']+)'", old_badging)):
+            raise RuntimeError('Update must not add native permissions')
+        apk_manifest = command(str(TOOLS / 'aapt'), 'dump', 'xmltree', str(APK), 'AndroidManifest.xml')
+        if not re.search(r'android:allowBackup[^\n]*=\(type 0x12\)0x0', apk_manifest):
+            raise RuntimeError('APK must explicitly disable backup')
+        info.update(previousApprovedApk=str(incumbent), previousApprovedSha256=baseline_hash,
+                    sameSignerAsPreviousApprovedApk=True, nativePermissionsUnchanged=True)
     previous = json.loads((RECORD / 'apk-build.json').read_text())
     if info['signerCertificateSha256'] == previous['signerCertificateSha256']:
         raise RuntimeError('Release unexpectedly uses the debug signer')
@@ -86,7 +105,7 @@ def verify_release():
     manifest = ET.parse(manifest_path).getroot()
     android = '{http://schemas.android.com/apk/res/android}'
     if (manifest.get('package'), manifest.get(android + 'versionCode'),
-            manifest.get(android + 'versionName')) != ('com.udf.party', '3', '1.0.2'):
+            manifest.get(android + 'versionName')) != ('com.udf.party', str(code), version):
         raise RuntimeError('AAB manifest identity mismatch')
     if manifest.find('uses-sdk').get(android + 'targetSdkVersion') != '36':
         raise RuntimeError('AAB target SDK mismatch')
@@ -133,6 +152,30 @@ def verify_release():
             if any(b'http://localhost:4000' in script or b'https://102.68.98.129/api' in script
                    for script in scripts):
                 raise RuntimeError('Local/legacy API target packaged')
+            if update_release:
+                bundled = b'\n'.join(scripts)
+                for marker in (b'View data below', b'Back to map', b'Check for updates', b'udf.update.later.',
+                               b'/public/app-update', b'Send update notice', b'ward changes remaining',
+                               b'maximum of 3 times', b'following your location', b'CPT-W079', b'udf-map-svg'):
+                    if marker not in bundled:
+                        raise RuntimeError(f'Update/map/ward marker missing: {marker!r}')
+                if any(marker in bundled.lower() for marker in (b'maplibre', b'mapbox', b'tile.openstreetmap')):
+                    raise RuntimeError('Unexpected tile-map runtime or provider')
+                styles = b'\n'.join(archive.read(name) for name in names
+                                    if name.startswith(prefix + 'public/_next/') and name.endswith('.css'))
+                for marker in (b'.udf-map-scroll-footer', b'--map-scroll-height', b'.app-update-dialog'):
+                    if marker not in styles:
+                        raise RuntimeError(f'Update/map stylesheet missing: {marker!r}')
+                plugins = {p['pkg']: p['classpath'] for p in json.loads(archive.read(prefix + 'capacitor.plugins.json'))}
+                for package, classpath in (
+                        ('@capacitor/app', 'com.capacitorjs.plugins.app.AppPlugin'),
+                        ('@capacitor/app-launcher', 'com.capacitorjs.plugins.applauncher.AppLauncherPlugin'),
+                        ('@capacitor/preferences', 'com.capacitorjs.plugins.preferences.PreferencesPlugin')):
+                    if plugins.get(package) != classpath:
+                        raise RuntimeError(f'Native update plugin not registered: {package}')
+                info['updatePluginsRegistered'] = True
+                info['updateMapWardMarkersVerified'] = True
+                info['tileFreeBundleScreeningPassed'] = True
             assets_checked[path.suffix] = checked
     mapping = ROOT / 'frontend/android/app/build/outputs/mapping/release/mapping.txt'
     if not mapping.is_file() or not mapping.stat().st_size:
@@ -148,16 +191,16 @@ def verify_release():
         'r8Mapping': str(mapping), 'r8MappingSha256': sha(mapping.read_bytes()),
         'installedOrDeviceTested': False, 'uploadedToPlay': False,
     })
-    receipt = RECORD / 'play-release-build.json'
+    receipt = RECORD / (f'app-update-build-{code}-{info["sha256"]}.json' if update_release else 'play-release-build.json')
     receipt.write_text(json.dumps(info, indent=2) + '\n')
-    print('PASS release APK/AAB 1.0.2 (3), API 36, approved upload signer, non-debuggable')
+    print(f'PASS release APK/AAB {version} ({code}), API 36, approved upload signer, non-debuggable')
     print(f'PASS web assets {assets_checked}, production API, no bundled native libraries, APK alignment')
     print(f'APK {APK}\nAAB {aab}\nRECEIPT {receipt}')
     print('Device/runtime testing and Play Console upload were not performed.')
 
 
-def verify_current():
-    """Read-only verification of both September release APKs and web bundles."""
+def verify_current(apks_only=False, mail_only=False):
+    """Verify current APKs, with independent APK-only and Mail-only modes."""
     global APK, TOOLS
     import tarfile
     TOOLS = Path('/Users/why/Library/Android/sdk/build-tools/36.0.0')
@@ -165,6 +208,8 @@ def verify_current():
     for directory, app_id, code, version in (
             ('frontend', 'com.udf.party', 6, '1.0.5'),
             ('mailapp', 'com.udf.mail', 1, '1.0.0')):
+        if mail_only and directory != 'mailapp':
+            continue
         APK = ROOT / directory / 'android/app/build/outputs/apk/release/app-release.apk'
         info = inspect()
         if (info['applicationId'], info['versionCode'], info['versionName'], info['debuggable']) != (
@@ -190,6 +235,8 @@ def verify_current():
             if config.get('appId') != app_id or config.get('android', {}).get('webContentsDebuggingEnabled'):
                 raise RuntimeError('Unexpected WebView configuration')
             if directory == 'mailapp':
+                if not re.search(r'android:usesCleartextTraffic[^\n]*=\(type 0x12\)0x0', manifest):
+                    raise RuntimeError('Mail must explicitly prohibit cleartext traffic')
                 if config.get('server') != {'url': 'https://mail.udf-party.co.za',
                                            'androidScheme': 'https', 'allowNavigation': []}:
                     raise RuntimeError('Mail remote URL/navigation mismatch')
@@ -205,8 +252,42 @@ def verify_current():
                 for marker in (API, b'following your location', b'No UDF candidate at LGE2026'):
                     if marker not in scripts:
                         raise RuntimeError('Party release content marker missing')
+            if apks_only:
+                export = ROOT / directory / ('out' if directory == 'frontend' else 'www')
+                synced = ROOT / directory / 'android/app/src/main/assets/public'
+                checked = 0
+                for source in sorted(export.rglob('*')):
+                    relative = source.relative_to(export)
+                    if not source.is_file() or any(part.startswith('.') for part in relative.parts):
+                        continue
+                    data = source.read_bytes()
+                    if synced.joinpath(relative).read_bytes() != data or archive.read(
+                            'assets/public/' + relative.as_posix()) != data:
+                        raise RuntimeError(f'Export/sync/APK mismatch: {directory}/{relative}')
+                    checked += 1
+                if not checked:
+                    raise RuntimeError('No packaged web assets verified')
+                info['webAssetsVerified'] = checked
+                if directory == 'frontend' and any(target in scripts for target in (
+                        b'http://localhost:4000', b'https://102.68.98.129/api')):
+                    raise RuntimeError('Local or legacy API target packaged')
+                mapping = ROOT / directory / 'android/app/build/outputs/mapping/release/mapping.txt'
+                if not mapping.is_file() or not mapping.stat().st_size:
+                    raise RuntimeError('R8 mapping missing')
+                info['r8MappingSha256'] = sha(mapping.read_bytes())
         info.pop('signatureWarnings')
         print(json.dumps(info, sort_keys=True))
+    if mail_only:
+        print('PASS signed Mail APK, production HTTPS configuration, packaged asset parity and R8 mapping.')
+        print('Static checks only; device testing and publication were not performed.')
+        return
+    if apks_only:
+        previous = json.loads((RECORD / 'apk-build.json').read_text())
+        if sha(Path(previous['apk']).read_bytes()) != previous['sha256']:
+            raise RuntimeError('Previous debug APK was not preserved')
+        print('PASS both signed APKs, packaged asset parity, R8 mappings and preserved debug APK.')
+        print('Static checks only; device testing and publication were not performed.')
+        return
     for name in ('udf-backend.tar.gz', 'udf-frontend.tar.gz'):
         path = ROOT / 'deploy/.artifacts' / name
         with tarfile.open(path) as archive:
@@ -233,14 +314,14 @@ def verify_current():
 
 
 mode = sys.argv[1] if len(sys.argv) == 2 else ''
-if mode not in ('baseline', 'verify', 'release', 'current'):
-    raise SystemExit('Usage: python3 deploy/release-progress/verify-apk.py baseline|verify|release|current')
-if mode == 'current':
-    verify_current()
+if mode not in ('baseline', 'verify', 'release', 'current', 'apks', 'mail', 'updates'):
+    raise SystemExit('Usage: python3 deploy/release-progress/verify-apk.py baseline|verify|release|current|apks|mail|updates')
+if mode in ('current', 'apks', 'mail'):
+    verify_current(apks_only=mode != 'current', mail_only=mode == 'mail')
     raise SystemExit(0)
-if mode == 'release':
+if mode in ('release', 'updates'):
     APK = ROOT / 'frontend/android/app/build/outputs/apk/release/app-release.apk'
-    verify_release()
+    verify_release(update_release=mode == 'updates')
     raise SystemExit(0)
 
 info = inspect()

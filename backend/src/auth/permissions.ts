@@ -133,6 +133,7 @@ export const Permission = {
   PLATFORM_READ: 'platform:read',
   ANALYTICS_READ: 'analytics:read',
   CONTENT_MANAGE: 'content:manage',
+  APP_RELEASE_MANAGE: 'app_release:manage',
 } as const;
 
 export type Permission = (typeof Permission)[keyof typeof Permission];
@@ -198,6 +199,7 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     Permission.PLATFORM_READ,
     Permission.ANALYTICS_READ,
     Permission.CONTENT_MANAGE,
+    Permission.APP_RELEASE_MANAGE,
   ],
   [Role.NATIONAL_ADMIN]: NATIONAL_ADMIN_PERMISSIONS,
   [Role.REGIONAL_ORGANIZER]: [
@@ -489,6 +491,7 @@ export const MODULE_PERMISSIONS: Record<ModuleKey, readonly Permission[]> = {
     Permission.PLATFORM_READ,
     Permission.ANALYTICS_READ,
     Permission.CONTENT_MANAGE,
+    Permission.APP_RELEASE_MANAGE,
   ],
 };
 

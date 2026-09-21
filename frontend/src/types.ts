@@ -982,6 +982,16 @@ export interface MyWardBoundary {
   geom: { type: string; coordinates: any } | null;
 }
 
+/** Server-owned lifetime allowance for changing the member's registered ward. */
+export interface WardChangeStatus {
+  wardCode: string | null;
+  wardName: string | null;
+  regionCode: string | null;
+  changesUsed: number;
+  changesRemaining: number;
+  maxChanges: number;
+}
+
 /**
  * The caller's OWN ward only — the restricted map a member (`geo:read_own_ward`)
  * receives: their subcouncil and ward shapes plus the PII-free ward drill-down

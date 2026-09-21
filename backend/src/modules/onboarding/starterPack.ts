@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { logger } from '../../config/logger.js';
 import { query } from '../../db/pool.js';
 import { councillorForWard, councillorWasFielded } from '../transparency/service.js';
 import { loadMediaBuffer } from '../crm/mediaService.js';
@@ -60,6 +62,25 @@ interface CouncillorBlock {
 const RED = PARTY_PROFILE.colors.red;
 const BLACK = PARTY_PROFILE.colors.black;
 const GOLD = PARTY_PROFILE.colors.gold;
+
+async function presidentAttachments(): Promise<EmailAttachment[]> {
+  try {
+    // This path resolves to backend/dist/assets from both src/ and dist/.
+    // The build/predev script packages the approved art, avoiding remote loads.
+    const [image, pdf] = await Promise.all([
+      readFile(new URL('../../../dist/assets/udf-president.jpg', import.meta.url)),
+      readFile(new URL('../../../dist/assets/udf-president.pdf', import.meta.url)),
+    ]);
+    return [
+      { cid: 'udf-president', filename: 'UDF-President-Andhor-Grey-Marks.jpg', contentType: 'image/jpeg', buffer: image },
+      { filename: 'UDF-President-Andhor-Grey-Marks.pdf', contentType: 'application/pdf', buffer: pdf },
+    ];
+  } catch {
+    // An omitted release asset must not prevent delivery of the sign-in code.
+    logger.warn('Starter-pack president assets unavailable; rebuild backend assets');
+    return [];
+  }
+}
 
 // NB: there is deliberately no `appUrl()`/PUBLIC_BASE_URL link in this email.
 // The mini-manifesto used to end with "Read the full manifesto →" pointing at
@@ -168,11 +189,12 @@ export async function buildStarterPackEmail(
   member: StarterPackMember,
   otp: string,
 ): Promise<RenderedEmail> {
-  const [wardName, councillor, leader, fielded] = await Promise.all([
+  const [wardName, councillor, leader, fielded, president] = await Promise.all([
     resolveWardName(member.wardCode),
     resolveCouncillor(member.wardCode),
     resolveLeader(),
     member.wardCode ? councillorWasFielded(member.wardCode) : Promise.resolve(true),
+    presidentAttachments(),
   ]);
 
   // An empty ward has two honest explanations, and a welcome email naming the
@@ -185,6 +207,7 @@ export async function buildStarterPackEmail(
   const attachments: EmailAttachment[] = [];
   if (councillor?.attachment) attachments.push(councillor.attachment);
   if (leader?.attachment) attachments.push(leader.attachment);
+  attachments.push(...president);
 
   const firstName = member.fullName.split(' ')[0] || member.fullName;
   const subject = `Welcome to the ${PARTY_PROFILE.fullName} — your starter pack & sign-in code`;
@@ -264,7 +287,7 @@ export async function buildStarterPackEmail(
           <div style="font-size:13px;color:#555;line-height:1.5;">Open the app, sign in with your email and use this code as your <strong>first password</strong>. You will be asked to change it straight away. It expires in 10 minutes.</div>
         </div>
 
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${councillorHtml}</table>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${councillorHtml}
 
         <tr><td style="padding:16px 0 8px 0;border-top:1px solid #f0f0f0;">
           <h2 style="margin:0 0 8px 0;font-size:18px;color:${BLACK};">The mini-manifesto</h2>
@@ -272,6 +295,12 @@ export async function buildStarterPackEmail(
         </td></tr>
 
         ${leaderHtml}
+
+        ${president.length ? `<tr><td style="padding:18px 0;border-top:1px solid #f0f0f0;">
+          <h2 style="margin:0 0 6px;font-size:18px;color:${BLACK};">Our president · Andhor Grey Marks</h2>
+          <p style="margin:0 0 12px;font-size:14px;color:#555;">President of the United Democratic Front Party. A printable copy of this poster is attached as a PDF.</p>
+          <img src="cid:udf-president" alt="Andhor Grey Marks, President of the United Democratic Front Party — official profile poster" width="552" style="display:block;width:100%;max-width:552px;height:auto;border:0;" />
+        </td></tr>` : ''}
 
         <tr><td style="padding:18px 0 4px 0;border-top:1px solid #f0f0f0;">
           <div style="font-size:15px;color:#222;line-height:1.55;">
@@ -281,6 +310,7 @@ export async function buildStarterPackEmail(
             your honest feedback is what makes representation work.
           </div>
         </td></tr>
+        </table>
       </td></tr>
       <tr><td style="background:#fafafa;padding:16px 24px;border-top:1px solid #eee;">
         <div style="font-size:12px;color:#777;line-height:1.6;">
@@ -320,7 +350,7 @@ THE MINI-MANIFESTO
 ${miniManifestoText()}
 
 ${lText}
-
+${president.length ? '\nOUR PRESIDENT — Andhor Grey Marks\nPresident of the United Democratic Front Party.\nThe official president profile poster is included in the attached PDF.\n' : ''}
 Thank you for joining us and for helping keep our ward councillors accountable.
 Once signed in, tap "Rate your councillor" on the Home tab any time to score
 their performance each month.

@@ -65,6 +65,10 @@ const schema = z.object({
   // Public web origin used to build membership / mandate confirmation links.
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
 
+  // Operator-owned APK catalog; absent configuration disables announcements.
+  APP_RELEASE_CATALOG_DIR: z.string().optional(),
+  APP_RELEASE_SIGNER_SHA256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+
   // ── Outbound mail (FR-Q) ────────────────────────────────────────────────
   // The production host runs a local postfix (loopback submission, DKIM signed
   // by the on-box opendkim milter), so the defaults need no credentials: the

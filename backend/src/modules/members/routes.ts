@@ -11,6 +11,7 @@ import {
   idParamSchema,
 } from './schemas.js';
 import * as service from './service.js';
+import { changeOwnWard, changeOwnWardSchema, getOwnWardChanges } from './wardChanges.js';
 
 /**
  * /api/members — CRUD for party members.
@@ -29,6 +30,16 @@ function actorCtx(req: any) {
 }
 
 membersRouter.use(authenticate);
+
+// Own profile only; no member-directory or staff write permission is granted.
+membersRouter.get('/me/ward', asyncHandler(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await getOwnWardChanges(req.principal!));
+}));
+membersRouter.patch('/me/ward', asyncHandler(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await changeOwnWard(req.principal!, changeOwnWardSchema.parse(req.body)));
+}));
 
 // LIST — member:read, scope-limited results (ward for a councillor/member,
 // regions for a regional organizer, unfiltered only for national scope).

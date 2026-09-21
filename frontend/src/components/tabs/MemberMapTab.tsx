@@ -6,6 +6,8 @@ import type { MyWard } from '../../types';
 import { Sheet } from '../ui';
 import RegionSheet from '../RegionSheet';
 import UdfStaticMap from '../UdfStaticMap';
+import { useShell } from '../AppShell';
+import { useAuth } from '../../lib/auth';
 
 /**
  * The Map tab as a MEMBER (`geo:read_own_ward`, not `geo:read`) gets it.
@@ -26,6 +28,8 @@ import UdfStaticMap from '../UdfStaticMap';
  * rather than data.
  */
 export default function MemberMapTab() {
+  const { open } = useShell();
+  const { role, wardCode } = useAuth();
   const [selected, setSelected] = useState<{ code: string; geography: string } | null>(null);
   const [own, setOwn] = useState<MyWard | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,17 +37,21 @@ export default function MemberMapTab() {
   useEffect(() => {
     let live = true;
     setError(null);
+    setOwn(null);
+    setSelected(null);
     api.geoMyWard().then((ward) => { if (live) setOwn(ward); })
       .catch((e) => { if (live) setError(e?.message ?? 'Your ward profile is unavailable'); });
     return () => { live = false; };
-  }, [retry]);
+  }, [retry, wardCode]);
 
   return (
     <>
       {error && <div className="banner err" role="alert">{error} <button onClick={() => setRetry((n) => n + 1)}>Retry</button></div>}
       {own && <button className="btn btn-ghost" onClick={() => setSelected({ code: own.ward.code, geography: `${/^ward\b/i.test(own.ward.name) ? own.ward.name : `Ward ${own.ward.name}`} · ${own.subcouncil?.name ?? 'Subcouncil unknown'}` })}>My ward councilor</button>}
+      {role === 'member' && <button className="btn btn-ghost" style={{ minHeight: 44 }} onClick={() => open('more', 'settings')}>Change registered ward · maximum 3 changes</button>}
       <div className="map-pane">
         <UdfStaticMap
+          scrollCue
           initialLayer="ward"
           wardCode={own?.ward.code}
           onSelect={setSelected}

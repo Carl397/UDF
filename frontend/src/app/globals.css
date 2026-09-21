@@ -950,6 +950,30 @@ input[type='range'] {
 .fab:active { transform: scale(0.94); }
 .fab svg { width: 24px; height: 24px; }
 
+/* Update prompts are native dialogs: focus containment and inert background. */
+.app-update-dialog {
+  width: min(480px, calc(100% - 24px)); max-height: calc(100dvh - 32px);
+  overflow-y: auto; border: 1px solid var(--line); border-radius: 16px;
+  padding: 20px; color: var(--text); background: var(--card);
+}
+.app-update-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.app-update-dialog .btn, .app-release-form .btn { min-height: 44px; white-space: normal; }
+.app-update-dialog :focus-visible, .app-release-form :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.app-update-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-release-form { display: grid; gap: 12px; min-width: 0; }
+.app-release-form label { display: grid; gap: 6px; }
+.app-release-form select, .app-release-form textarea { width: 100%; min-width: 0; min-height: 44px; font: inherit; }
+
+/* Registered-ward self-service; controls remain usable on narrow phones. */
+.ward-settings { min-width: 0; }
+.ward-settings h3 { margin: 0 0 10px; }
+.ward-settings fieldset { border: 0; margin: 14px 0 0; padding: 0; min-width: 0; display: grid; gap: 12px; }
+.ward-settings select { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; }
+.ward-settings .btn { min-height: 44px; white-space: normal; }
+.ward-change-confirm { margin-top: 14px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; }
+.ward-change-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ward-settings :focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+
 /* ── Map / heat panes ──────────────────────────────────────── */
 .map-pane {
   position: relative;
@@ -2544,6 +2568,27 @@ button.banner.alert-strip span:nth-child(2) { flex: 1; }
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
+
+/* Mobile-only footer stays outside both scrolling content and SVG gestures. */
+.udf-map-layout { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.udf-map-layout > .udf-map {
+  flex: 1; min-height: 0; min-width: 0;
+  overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable;
+  scrollbar-width: thin; scrollbar-color: var(--text-3) var(--line);
+}
+.udf-map-layout > .udf-map > * { flex-shrink: 0; }
+.udf-map-layout > .udf-map::-webkit-scrollbar { width: 6px; }
+.udf-map-layout > .udf-map::-webkit-scrollbar-thumb { background: var(--text-3); border-radius: 4px; }
+.udf-map-layout .udf-map-frame {
+  width: min(100%, max(180px, calc((var(--map-scroll-height, 500px) - 54px) * var(--udf-map-aspect, 0.66))));
+}
+.udf-map-scroll-footer { flex: 0 0 56px; padding: 6px 10px; background: var(--card); border-top: 1px solid var(--line); }
+.udf-map-scroll-cue {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  width: 100%; min-height: 44px; border: 1px solid var(--red); border-radius: 10px;
+  background: var(--red-tint); color: var(--red); font: inherit; font-weight: 700; cursor: pointer;
+}
+.udf-map-scroll-cue:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 
 /* Layer switch: Region / Subcouncil / Ward. */
 .udf-map-layers {

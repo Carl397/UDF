@@ -76,6 +76,7 @@ import type {
   WardCandidate,
   WardCandidateInput,
   WardDetail,
+  WardChangeStatus,
   WardLookupResult,
   WardOverview,
   WorkType,
@@ -630,6 +631,15 @@ export interface PublicPage {
 
 // ── Auth ─────────────────────────────────────────────────────────
 export const api = {
+  appReleases(): Promise<import('./appUpdates').PreparedReleases> {
+    return request('/crm/superadmin/app-releases', { cache: 'no-store' });
+  },
+  publishAppRelease(artifactId: string, notes: string, expectedAnnouncementId: string | null): Promise<{ announcementId: string; changed: boolean }> {
+    return request('/crm/superadmin/app-releases/publish', { method: 'POST', body: JSON.stringify({ artifactId, notes, expectedAnnouncementId }) });
+  },
+  withdrawAppRelease(announcementId: string): Promise<{ changed: boolean }> {
+    return request('/crm/superadmin/app-releases/withdraw', { method: 'POST', body: JSON.stringify({ announcementId }) });
+  },
   async login(email: string, password: string): Promise<LoginResponse> {
     const res = await request<LoginResponse>('/auth/login', {
       method: 'POST',
@@ -696,6 +706,30 @@ export const api = {
   },
 
   // ── Members ────────────────────────────────────────────────────
+  ownWardChanges(): Promise<WardChangeStatus> {
+    return request('/members/me/ward', { cache: 'no-store' });
+  },
+
+  async changeOwnWard(wardCode: string, expectedWardCode: string | null): Promise<WardChangeStatus & { changed: boolean }> {
+    // Finish an existing rotation before adopting the new ward's access token.
+    if (refreshInFlight) await refreshInFlight;
+    const result = await request<WardChangeStatus & { changed: boolean; accessToken: string }>('/members/me/ward', {
+      method: 'PATCH', body: JSON.stringify({ wardCode, expectedWardCode }),
+    });
+    // The request may itself have triggered a 401/refresh. Keep that rotated
+    // refresh token, and never attach a delayed response to a different account.
+    if (refreshInFlight) await refreshInFlight;
+    const session = tokenStore.refresh;
+    try {
+      const subject = (token: string) => JSON.parse(atob(token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/'))).sub;
+      if (session && tokenStore.access && subject(tokenStore.access) === subject(result.accessToken)) {
+        tokenStore.set(result.accessToken, session);
+        emitSession(result.accessToken);
+      }
+    } catch { /* A missing/malformed local session is never restored here. */ }
+    return result;
+  },
+
   listMembers(params: {
     regionCode?: string;
     tier?: string;

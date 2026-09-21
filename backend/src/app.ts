@@ -36,6 +36,7 @@ import { moderationRouter } from './modules/moderation/routes.js';
 import { analyticsRouter } from './modules/analytics/routes.js';
 import { analyticsPublicRouter } from './modules/analytics/publicRoutes.js';
 import { superadminRouter } from './modules/platform/routes.js';
+import { appReleasesAdminRouter, appReleasesPublicRouter } from './modules/appReleases/routes.js';
 import { contentAdminRouter, contentPublicRouter, contentPublicPagesRouter, contentPublicMediaRouter } from './modules/content/routes.js';
 import { candidatesCrmRouter } from './modules/candidates/routes.js';
 import { candidatesPublicRouter } from './modules/candidates/publicRoutes.js';
@@ -128,6 +129,7 @@ export function createApp(): express.Express {
   app.use('/api/public/petitions', petitionsRouter);
   // First-party analytics ingest + counted APK download (anonymous, cookieless).
   app.use('/api/public', analyticsPublicRouter);
+  app.use('/api/public', appReleasesPublicRouter);
   // Structured website content, published blocks only (anonymous hydration).
   app.use('/api/public/content', contentPublicRouter);
   // Published CMS pages (ordered block sections), for marketing + in-app renderers.
@@ -142,6 +144,7 @@ export function createApp(): express.Express {
   // content editor. Mounted BEFORE the CRM router so its `overview:read`
   // router-level gate never pre-empts the stricter `platform:read`/
   // `content:manage` guards on these paths.
+  app.use('/api/crm/superadmin/app-releases', appReleasesAdminRouter);
   app.use('/api/crm/superadmin/content', contentAdminRouter);
   // Ward-candidate roster CRUD + photos (content:manage), mounted before the
   // general CRM router so its own permission guard is authoritative.

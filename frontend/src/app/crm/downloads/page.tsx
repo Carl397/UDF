@@ -7,6 +7,7 @@ import { useAuth } from '../../../lib/auth';
 import { can, Perm } from '../../../lib/caps';
 import { CrmPageHeader, CrmCard, CrmStatGrid, CrmTable, CrmFilters } from '../../../components/crm/ui';
 import { TimeSeriesArea, HBarChart } from '../../../components/crm/charts';
+import AppUpdatesCard from '../../../components/crm/AppUpdatesCard';
 
 /**
  * Platform → App Downloads (SuperAdmin).
@@ -64,6 +65,8 @@ export default function Downloads() {
         subtitle="How often the Android installer is fetched, and onto what devices."
         actions={loading ? <span style={{ fontSize: 12, color: '#8a817b', alignSelf: 'center' }}>Loading…</span> : undefined}
       />
+
+      <AppUpdatesCard />
 
       <CrmFilters>
         <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Window">

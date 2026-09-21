@@ -179,6 +179,45 @@
   font-size: 18px;
 }
 
+.udf-release {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.udf-president {
+  display: grid;
+  align-items: center;
+  gap: 36px;
+}
+.udf-president > * { min-width: 0; }
+.udf-president-poster {
+  margin: 0 auto;
+  width: 100%;
+  max-width: 440px;
+}
+.udf-president-poster img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: 16px;
+}
+.udf-president-poster figcaption {
+  padding-top: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+.udf-president-motto {
+  font-size: 19px;
+  line-height: 1.5;
+  font-weight: 800;
+}
+@media (min-width: 880px) {
+  .udf-president { grid-template-columns: 1fr 1fr; }
+}
+
 /* Phone mockup in hero */
 .udf-phone {
   position: relative;

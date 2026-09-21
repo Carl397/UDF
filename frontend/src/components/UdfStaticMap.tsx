@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import mapData from '../lib/udfMapData.json';
+import MapScrollLayout from './MapScrollLayout';
 import { api } from '../lib/api';
 import { mixWhite, prettyRegion, regionColor, SUBCOUNCIL_COLORS, wardColorForCode } from '../lib/taxonomy';
 import type { AreaCaseStats, CaseStats, HeatmapPoint } from '../types';
@@ -386,6 +387,7 @@ interface Props {
   wardCode?: string;
   heatPoints?: HeatmapPoint[];
   showCaseStats?: boolean;
+  scrollCue?: boolean;
   /** Start watching position immediately rather than waiting for the button. */
   autoLocate?: boolean;
 }
@@ -405,6 +407,7 @@ export default function UdfStaticMap({
   wardCode,
   heatPoints = [],
   showCaseStats = true,
+  scrollCue = false,
 }: Props) {
   const [layer, setLayer] = useState<Layer>(initialLayer);
   const [selected, setSelected] = useState<string | null>(null);
@@ -860,7 +863,7 @@ export default function UdfStaticMap({
   const labelZoom = Math.min(Math.max(Math.sqrt(VIEW_W / view.w), 1), 3.2);
 
   return (
-    <div className="udf-map">
+    <MapScrollLayout enabled={scrollCue}>
       {/* Layer switch — the three buttons that are the map's whole control set. */}
       <div className="udf-map-layers" role="group" aria-label="Map layer">
         {LAYERS.map((l) => (
@@ -1020,7 +1023,7 @@ export default function UdfStaticMap({
       </div>
 
       {/* Status line: what the GPS found, or why it did not. */}
-      <div className="udf-map-status" aria-live="polite">
+      <div className="udf-map-status" aria-live="polite" data-map-details>
         {geoError ? (
           <span className="udf-map-status-err">{geoError}</span>
         ) : here ? (
@@ -1081,6 +1084,6 @@ export default function UdfStaticMap({
           })}
         </div>
       </div>}
-    </div>
+    </MapScrollLayout>
   );
 }
