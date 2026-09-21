@@ -49,12 +49,12 @@ sed -i '/# BEGIN UDF-BRANDING/,/# END UDF-BRANDING/d' "${CONFIG}"
 cat >>"${CONFIG}" <<'BLOCK'
 
 # BEGIN UDF-BRANDING (managed by deploy/scripts/brand-webmail.sh)
-# Logo on EVERY task, not just the login screen: the 'elastic' key applies to
-# every task under the Elastic skin, so the header of the signed-in mailbox,
+# Logo on EVERY task, not just the login screen: the 'elastic:*' key applies to
+# every template under the Elastic skin, so the header of the signed-in mailbox,
 # settings and contacts pages carries the party mark too. 'elastic:login' is
 # kept explicit so the login sizing rule always has its source.
 $config['skin_logo'] = [
-    'elastic'        => '/images/udf-logo.png',
+    'elastic:*'      => '/images/udf-logo.png',
     'elastic:login'  => '/images/udf-logo.png',
 ];
 $config['favicon'] = '/images/udf-favicon.ico';

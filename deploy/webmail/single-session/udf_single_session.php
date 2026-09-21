@@ -75,7 +75,7 @@ class udf_single_session extends rcube_plugin
                 'SELECT token_hash, expires_at FROM udf_session_policy WHERE user_id = ?',
                 (int) $_SESSION['user_id']
             );
-            $row = $this->rcmail->get_db_instance()->fetch_array($result);
+            $row = $this->rcmail->get_dbh()->fetch_assoc($result);
             if (!$row || (int) $row['expires_at'] <= time()
                 || !hash_equals($row['token_hash'], hash('sha256', session_id()))
                 || !$this->rcmail->session->check_auth()) {
@@ -93,7 +93,7 @@ class udf_single_session extends rcube_plugin
 
     private function query($sql, ...$params)
     {
-        $db = $this->rcmail->get_db_instance();
+        $db = $this->rcmail->get_dbh();
         $result = $db->query($sql, ...$params);
         // Roundcube returns errors instead of necessarily throwing exceptions.
         if (!$result || $db->is_error()) {

@@ -23,7 +23,8 @@ class PolicyTestDb {
         return $q;
     }
     public function is_error() { return $this->failed; }
-    public function fetch_array($q) { return $q->fetch(PDO::FETCH_ASSOC); }
+    public function fetch_array($q) { return $q->fetch(PDO::FETCH_NUM); }
+    public function fetch_assoc($q) { return $q->fetch(PDO::FETCH_ASSOC); }
 }
 class rcmail {
     public static $instance;
@@ -44,7 +45,7 @@ class rcmail {
         };
     }
     public static function get_instance() { return self::$instance; }
-    public function get_db_instance() { return $this->db; }
+    public function get_dbh() { return $this->db; }
     public function kill_session() {
         (self::$hooks['session_destroy'])([]);
         $_SESSION = [];

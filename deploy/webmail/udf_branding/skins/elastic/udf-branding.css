@@ -177,7 +177,7 @@ input[type="search"]:focus {
 
 #taskmenu a.active,
 #layout-menu .menu a.selected,
-#sidebar .listing li.selected,
+#layout-sidebar .listing li.selected,
 ul.contactlist li.selected,
 .table-listing tbody tr.selected {
   background-color: rgba(216, 38, 28, 0.14) !important;
@@ -186,28 +186,29 @@ ul.contactlist li.selected,
 /* ── Post-login chrome (every task except the login screen) ─────────────── */
 
 /*
- * After sign-in the Elastic skin shows a header bar (`#header`) with the logo
- * and the task icons (`#taskbar`), a folder/menu rail (`#sidebar` / `#menu`) and
+ * After sign-in Elastic shows the logo and task icons in `#layout-menu` /
+ * `#taskmenu`, a folder rail in `#layout-sidebar`, panel headers and
  * the message list. The login styling above is scoped to `.task-login`, so
  * without these rules the signed-in UI reverts to the stock teal Elastic look.
  * These target the skin's own structural ids, so they survive a version bump
  * the same way the plugin does (nothing in skins/ is edited).
  */
-body:not(.task-login) #header,
-html.dark-mode body:not(.task-login) #header {
+body:not(.task-login) #layout-menu,
+body:not(.task-login) #layout > div > .header,
+body:not(.task-login) #layout-menu .popover-header {
   background: linear-gradient(180deg, var(--udf-ink) 0%, var(--udf-black) 100%) !important;
   border-bottom: 3px solid var(--udf-red) !important;
 }
 
 /* Header text + task icons read light on the dark band; hover goes to the brand red. */
-body:not(.task-login) #header,
-body:not(.task-login) #header .toolbar a,
-body:not(.task-login) #taskbar a {
+body:not(.task-login) #layout > div > .header,
+body:not(.task-login) #layout > div > .header a,
+body:not(.task-login) #taskmenu a {
   color: var(--udf-paper) !important;
 }
 
-#taskbar a:hover,
-#taskbar a.selected {
+body:not(.task-login) #taskmenu a:hover,
+body:not(.task-login) #taskmenu a.selected {
   color: var(--udf-gold) !important;
   border-bottom-color: var(--udf-red) !important;
 }
@@ -222,13 +223,12 @@ body:not(.task-login) img#logo {
 
 /* Folder + menu rail: brand the active/selected folder and the hover so the
    navigation column is visibly part of the party UI, not stock Elastic. */
-#sidebar .listing li a:hover,
+#layout-sidebar .listing li a:hover,
 #layout-menu .menu a:hover {
   background-color: rgba(216, 38, 28, 0.1) !important;
 }
 
-#sidebar .listing li.selected > a,
-#layout-menu .menu a.selected {
+#layout-sidebar .listing li.selected > a {
   color: var(--udf-red-deep) !important;
   box-shadow: inset 3px 0 0 var(--udf-red);
 }
