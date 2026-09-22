@@ -7,8 +7,19 @@ import { pool } from '../src/db/pool.ts';
 import { Role, permissionsForRole } from '../src/auth/permissions.ts';
 import { signAccessToken, verifyAccessToken } from '../src/auth/tokens.ts';
 import { authenticate } from '../src/middleware/authenticate.ts';
-import { errorHandler } from '../src/middleware/errorHandler.ts';
+import { errorHandler, notFoundHandler, requestId } from '../src/middleware/errorHandler.ts';
+import { ApiError, publicErrorMessage } from '../src/http/errors.ts';
+import { updatePageSections } from '../src/modules/content/service.ts';
+import { z } from 'zod';
 import { membersRouter } from '../src/modules/members/routes.ts';
+import { patrolsRouter } from '../src/modules/patrols/routes.ts';
+import { wardBulletinsRouter } from '../src/modules/wardBulletins/routes.ts';
+import { transparencyRouter } from '../src/modules/transparency/routes.ts';
+import { projectsRouter } from '../src/modules/projects/routes.ts';
+import { ratingsRouter } from '../src/modules/ratings/routes.ts';
+import { verificationsRouter } from '../src/modules/verifications/routes.ts';
+import { participationsRouter } from '../src/modules/participations/routes.ts';
+import { crmRouter } from '../src/modules/crm/routes.ts';
 import { getOwnWardChanges, changeOwnWard, changeOwnWardSchema } from '../src/modules/members/wardChanges.ts';
 
 if (env.isProduction || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(env.DATABASE_URL).hostname)) {
@@ -20,6 +31,8 @@ const schema = `qa_ward_${randomUUID().replaceAll('-', '')}`;
 const admin = new pg.Pool({ connectionString: env.DATABASE_URL, max: 2 });
 const testPool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 8,
   options: `-c search_path=${schema},public -c statement_timeout=10000` });
+const readOnlyPool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 2,
+  options: `-c search_path=${schema},public -c statement_timeout=10000 -c default_transaction_read_only=on` });
 const originalQuery = pool.query;
 const originalConnect = pool.connect;
 let server;
@@ -204,9 +217,31 @@ try {
   });
 
   const app = express();
-  app.use(express.json());
+  app.use(requestId);
+  app.use(express.json({ limit: '2kb' }));
   app.use('/api/members', membersRouter);
+  for (const [path, router] of [['patrols', patrolsRouter], ['ward-bulletins', wardBulletinsRouter],
+    ['transparency', transparencyRouter], ['projects', projectsRouter], ['ratings', ratingsRouter],
+    ['verifications', verificationsRouter], ['participations', participationsRouter], ['crm', crmRouter]]) {
+    app.use(`/api/${path}`, router);
+  }
   app.get('/api/qa-scope', authenticate, (req, res) => res.json({ wardCode: req.principal.wardCode, regionCodes: req.principal.regionCodes }));
+  app.get('/api/qa-error/:kind', (req, _res, next) => {
+    const technical = 'SELECT private_table at /opt/internal/routes.js';
+    if (req.params.kind === 'typed') return next(ApiError.internal(technical));
+    if (req.params.kind === 'forbidden') return next(new ApiError(403, 'forbidden', technical, { stack: technical }));
+    if (req.params.kind === 'bad') return next(ApiError.badRequest(technical, { query: technical }));
+    if (req.params.kind === 'validation') {
+      const result = z.object({ internal_field: z.string({ required_error: technical }) }).safeParse({});
+      return next(result.error);
+    }
+    if (req.params.kind === 'duplicate') {
+      void updatePageSections('synthetic', [{ blockKey: 'same' }, { blockKey: 'same' }], {}).catch(next);
+      return;
+    }
+    next(new Error(technical));
+  });
+  app.use(notFoundHandler);
   app.use(errorHandler);
   server = app.listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -235,6 +270,90 @@ try {
     assert.equal(verifyAccessToken(result.accessToken).wardCode, nextWard);
     assert.deepEqual(await (await fetch(`${base}/api/qa-scope`, { headers })).json(), { wardCode: nextWard, regionCodes: [region] });
   });
+  await test('unmatched routes return generic copy, no method or path, even after authentication', async () => {
+    const p = await fixture();
+    for (const path of ['/api/missing-internal-route', '/api/members/me/ward/unsupported']) {
+      const response = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${signAccessToken(p)}` } });
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await response.json(), { error: { code: 'not_found',
+        message: 'This service or item is currently unavailable. Please try again later.',
+        reqId: response.headers.get('x-request-id') } });
+    }
+    assert.deepEqual(await snapshot(p), { ward, ward_changes_used: 0 });
+  });
+  await test('typed, unexpected and validation HTTP errors never return technical details', async () => {
+    for (const [kind, status, code] of [['typed', 500, 'internal_error'], ['unexpected', 500, 'internal_error'],
+      ['forbidden', 403, 'forbidden'], ['bad', 400, 'bad_request'], ['validation', 400, 'validation_error'],
+      ['duplicate', 400, 'duplicate_page_section']]) {
+      const response = await fetch(`${base}/api/qa-error/${kind}`);
+      assert.equal(response.status, status);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      const body = await response.json();
+      assert.deepEqual(body, { error: { code, message: publicErrorMessage(status, code), reqId: response.headers.get('x-request-id') } });
+      assert.doesNotMatch(JSON.stringify(body), /SELECT|private_table|\/opt|routes\.js|internal_field|details|stack/);
+      if (kind === 'duplicate') assert.match(body.error.message, /twice/);
+    }
+  });
+  await test('malformed and oversized request bodies use safe input errors', async () => {
+    for (const [body, status] of [['{"internal_marker":', 400], [JSON.stringify({ internal_marker: 'x'.repeat(3000) }), 413]]) {
+      const response = await fetch(`${base}/api/members/me/ward`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body });
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), { error: { code: 'bad_request', message: publicErrorMessage(status, 'bad_request'),
+        reqId: response.headers.get('x-request-id') } });
+    }
+  });
+  // These extra routers must reject input before writes; enforce that at the DB too.
+  pool.query = readOnlyPool.query.bind(readOnlyPool);
+  pool.connect = readOnlyPool.connect.bind(readOnlyPool);
+  await test('legacy validation handlers use the shared safe error envelope', async () => {
+    const p = await fixture({ role: Role.SUPERADMIN });
+    const headers = { Authorization: `Bearer ${signAccessToken(p)}`, 'Content-Type': 'application/json' };
+    for (const path of ['patrols', 'ward-bulletins', 'projects', 'ratings', 'verifications', 'participations']) {
+      for (const [method, suffix, body] of [['GET', '?limit=invalid', undefined], ['POST', '', '[]']]) {
+        const response = await fetch(`${base}/api/${path}${suffix}`, { method, headers, body });
+        assert.equal(response.status, 400, `${method} ${path}`);
+        assert.deepEqual(await response.json(), { error: { code: 'validation_error',
+          message: 'Please check your information and try again.', reqId: response.headers.get('x-request-id') } });
+      }
+    }
+    const response = await fetch(`${base}/api/transparency/wards/councillor?lat=invalid`, { headers });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.message, 'Please check your information and try again.');
+  });
+  await test('CRM ward validation and partial import errors never echo exception messages', async () => {
+    const p = await fixture({ role: Role.SUPERADMIN });
+    const headers = { Authorization: `Bearer ${signAccessToken(p)}`, 'Content-Type': 'application/json' };
+    for (const [method, suffix] of [['POST', ''], ['PATCH', `/${p.sub}`]]) {
+      const response = await fetch(`${base}/api/crm/users${suffix}`, { method, headers,
+        body: JSON.stringify({ email: 'fixture@example.invalid', password: 'synthetic-only', role: 'member', wardCodes: ['INTERNAL-MARKER'] }) });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.message, 'Please choose a valid ward and try again.');
+    }
+    const response = await fetch(`${base}/api/crm/users/import`, { method: 'POST', headers,
+      body: JSON.stringify({ rows: [{ email: 'fixture@example.invalid', password: 'synthetic-only', wardCode: 'INTERNAL-MARKER' }] }) });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.created, 0);
+    assert.equal(body.failed, 1);
+    assert.equal(body.results[0].message, 'Unable to import this row. Please check its details and try again.');
+    assert.doesNotMatch(JSON.stringify(body), /INTERNAL-MARKER|unknown ward code/);
+  });
+  pool.query = testPool.query.bind(testPool);
+  pool.connect = testPool.connect.bind(testPool);
+  await test('HTTP ward failures have stable actionable codes and leave the allowance unchanged', async () => {
+    for (const [options, body, status, code] of [[{ used: 3 }, input(), 409, 'ward_change_limit'],
+      [{}, input(nextWard, thirdWard), 409, 'ward_change_stale'], [{}, input('unknown'), 400, 'invalid_ward'],
+      [{ linked: false }, input(), 403, 'ward_profile_unavailable']]) {
+      const p = await fixture(options);
+      const before = await snapshot(p);
+      const response = await fetch(`${base}/api/members/me/ward`, { method: 'PATCH',
+        headers: { Authorization: `Bearer ${signAccessToken(p)}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), { error: { code, message: publicErrorMessage(status, code), reqId: response.headers.get('x-request-id') } });
+      assert.deepEqual(await snapshot(p), before);
+    }
+  });
   await test('even a member with member:write cannot bypass the cap via generic PATCH', async () => {
     const p = await fixture({ used: 3 });
     await testPool.query("UPDATE users SET permission_grants=ARRAY['member:write'] WHERE id=$1", [p.sub]);
@@ -247,6 +366,7 @@ try {
 } finally {
   if (server) await new Promise((resolve) => server.close(resolve));
   await testPool.end();
+  await readOnlyPool.end();
   pool.query = originalQuery;
   pool.connect = originalConnect;
   await pool.end();

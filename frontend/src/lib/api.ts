@@ -246,13 +246,73 @@ export const tokenStore = {
   },
 };
 
+/** Fixed public copy only: older servers and proxies may return internal details. */
+export function apiErrorMessage(status: number, code: string): string {
+  if (status === 0) return code === 'request_cancelled'
+    ? 'The request was canceled. Please try again.'
+    : 'Unable to connect. Please check your connection and try again.';
+  if (code === 'invalid_response') return 'Something went wrong. Please try again later.';
+  const messages: Record<string, readonly [number, string]> = {
+    device_banned: [403, 'This device cannot access this service. Please contact support.'],
+    account_banned: [403, 'This account is no longer active. Please contact support.'],
+    account_suspended: [403, 'This account is temporarily suspended. Please contact support.'],
+    invalid_current_password: [400, 'Your current password is incorrect. Please try again.'],
+    password_reused: [400, 'Choose a different new password.'],
+    module_lockout: [400, 'This feature must stay enabled to keep administrator access available.'],
+    unknown_module: [400, 'This feature is unavailable. Please refresh and try again.'],
+    duplicate_page_section: [400, 'A page cannot include the same content block twice.'],
+    ward_profile_unavailable: [403, 'Your registered ward is unavailable. Please contact support.'],
+    ward_members_only: [403, 'Registered ward settings are available to members only.'],
+    ward_change_stale: [409, 'Your registered ward has changed. Please reload it before trying again.'],
+    ward_change_limit: [409, 'You have used all 3 ward changes. Your registered ward cannot be changed again.'],
+    invalid_ward: [400, 'Please choose a valid ward and try again.'],
+  };
+  const known = Object.prototype.hasOwnProperty.call(messages, code) ? messages[code] : undefined;
+  if (known && known[0] === status) return known[1];
+  switch (status) {
+    case 400: case 422: return 'Please check your information and try again.';
+    case 401: return 'Please sign in again and try again.';
+    case 403: return 'You do not have access to this action.';
+    case 404: return 'This service or item is currently unavailable. Please try again later.';
+    case 408: case 504: return 'This is taking longer than expected. Please try again.';
+    case 409: return 'This change could not be completed. Please refresh and try again.';
+    case 413: return 'This file or request is too large. Please reduce its size and try again.';
+    case 429: return 'Please wait a moment before trying again.';
+    default: return 'Something went wrong. Please try again later.';
+  }
+}
+
 export class ApiClientError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
-    message: string,
   ) {
-    super(message);
+    super(apiErrorMessage(status, code));
+    this.name = code === 'request_cancelled' ? 'AbortError' : 'ApiClientError';
+  }
+}
+
+function transportError(error: unknown, signal?: AbortSignal | null): ApiClientError {
+  return new ApiClientError(0, signal?.aborted || (error instanceof Error && error.name === 'AbortError')
+    ? 'request_cancelled' : 'network_error');
+}
+
+async function safeFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  try { return await fetch(url, init); }
+  catch (error) { throw transportError(error, init.signal); }
+}
+
+async function safeBlob(response: Response, signal?: AbortSignal): Promise<Blob> {
+  try { return await response.blob(); }
+  catch (error) { throw transportError(error, signal); }
+}
+
+function validateWardStatus(value: WardChangeStatus): void {
+  const nullableText = (v: unknown) => v === null || typeof v === 'string';
+  if (!value || !nullableText(value.wardCode) || !nullableText(value.wardName) || !nullableText(value.regionCode) ||
+      value.maxChanges !== 3 || !Number.isInteger(value.changesUsed) || value.changesUsed < 0 ||
+      value.changesRemaining !== Math.max(0, value.maxChanges - value.changesUsed)) {
+    throw new ApiClientError(200, 'invalid_response');
   }
 }
 
@@ -316,7 +376,7 @@ function refreshAccessToken(): Promise<string | null> {
     if (!refresh) return null;
     try {
       const deviceId = await resolveDeviceId();
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
+      const res = await safeFetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -390,7 +450,7 @@ async function request<T>(path: string, init: RequestInit = {}, canRetry = true)
   const deviceId = await resolveDeviceId();
   if (deviceId) headers.set('x-device-id', deviceId);
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  const res = await safeFetch(`${API_BASE}${path}`, { ...init, headers });
 
   // Replay once with a fresh token. The credential endpoints are excluded so a
   // failed login (401) cannot trigger a refresh loop; authenticated auth
@@ -407,11 +467,17 @@ async function request<T>(path: string, init: RequestInit = {}, canRetry = true)
 
   if (res.status === 204) return undefined as T;
 
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = body?.error ?? {};
-    throw new ApiClientError(res.status, err.code ?? 'error', err.message ?? res.statusText);
+  let body;
+  try { body = await res.json(); }
+  catch (error) {
+    if (init.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw transportError(error, init.signal);
+    throw new ApiClientError(res.status, res.ok ? 'invalid_response' : 'error');
   }
+  if (!res.ok) {
+    const code = body?.error?.code;
+    throw new ApiClientError(res.status, typeof code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : 'error');
+  }
+  if (body?.error) throw new ApiClientError(res.status, 'invalid_response');
   return body as T;
 }
 
@@ -706,8 +772,10 @@ export const api = {
   },
 
   // ── Members ────────────────────────────────────────────────────
-  ownWardChanges(): Promise<WardChangeStatus> {
-    return request('/members/me/ward', { cache: 'no-store' });
+  async ownWardChanges(): Promise<WardChangeStatus> {
+    const result = await request<WardChangeStatus>('/members/me/ward', { cache: 'no-store' });
+    validateWardStatus(result);
+    return result;
   },
 
   async changeOwnWard(wardCode: string, expectedWardCode: string | null): Promise<WardChangeStatus & { changed: boolean }> {
@@ -716,6 +784,10 @@ export const api = {
     const result = await request<WardChangeStatus & { changed: boolean; accessToken: string }>('/members/me/ward', {
       method: 'PATCH', body: JSON.stringify({ wardCode, expectedWardCode }),
     });
+    validateWardStatus(result);
+    if (typeof result.changed !== 'boolean' || typeof result.accessToken !== 'string' || !result.accessToken) {
+      throw new ApiClientError(200, 'invalid_response');
+    }
     // The request may itself have triggered a 401/refresh. Keep that rotated
     // refresh token, and never attach a delayed response to a different account.
     if (refreshInFlight) await refreshInFlight;
@@ -875,11 +947,11 @@ export const api = {
    */
   async coverBlob(path: string, signal?: AbortSignal): Promise<Blob | null> {
     const token = tokenStore.access;
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await safeFetch(`${API_BASE}${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal,
     });
-    return res.ok ? res.blob() : null;
+    return res.ok ? safeBlob(res, signal) : null;
   },
 
   // ── Ward candidates ("Meet our ward councillors" roster) ───────
@@ -1106,11 +1178,11 @@ export const api = {
   async transparencyMediaBlob(mediaId: string, signal?: AbortSignal): Promise<Blob | null> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const token = tokenStore.access;
-      const res = await fetch(`${API_BASE}/transparency/media/${mediaId}`, {
+      const res = await safeFetch(`${API_BASE}/transparency/media/${mediaId}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal,
       });
-      if (res.ok) return res.blob();
+      if (res.ok) return safeBlob(res, signal);
       if (res.status !== 401 || attempt > 0 || !token || signal?.aborted) return null;
       const fresh = tokenStore.access !== token ? tokenStore.access : await refreshAccessToken();
       if (!fresh || signal?.aborted) return null;
@@ -1182,10 +1254,10 @@ export const api = {
    * `design.logo.mediaId` or `card.photo.mediaId`; returns null when not found.
    */
   async cardMediaBlob(mediaId: string): Promise<Blob | null> {
-    const res = await fetch(`${API_BASE}/id-card/media/${mediaId}`, {
+    const res = await safeFetch(`${API_BASE}/id-card/media/${mediaId}`, {
       headers: { Authorization: `Bearer ${tokenStore.access ?? ''}` },
     });
-    return res.ok ? res.blob() : null;
+    return res.ok ? safeBlob(res) : null;
   },
 
   // ── Ward jobs: interest register, demand, opportunity relay (PRD-jobs) ──
@@ -1323,11 +1395,11 @@ export const api = {
    */
   async attachmentFileBlob(id: string, signal?: AbortSignal): Promise<Blob | null> {
     const token = tokenStore.access;
-    const res = await fetch(`${API_BASE}/attachments/${id}/file`, {
+    const res = await safeFetch(`${API_BASE}/attachments/${id}/file`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal,
     });
-    return res.ok ? res.blob() : null;
+    return res.ok ? safeBlob(res, signal) : null;
   },
 
   // ── Participations ──────────────────────────────────────────────

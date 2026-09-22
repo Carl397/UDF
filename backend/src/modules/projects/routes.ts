@@ -15,9 +15,7 @@ projectsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listProjectsQuery.safeParse(req.query);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listProjects(req.principal!, parsed.data);
       res.json(result);
     } catch (err) { next(err); }
@@ -47,9 +45,7 @@ projectsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createProjectSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const project = await svc.createProject(parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -64,9 +60,7 @@ projectsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createMilestoneSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const milestone = await svc.addMilestone(req.params.id!, parsed.data);
       res.status(201).json(milestone);
     } catch (err) { next(err); }

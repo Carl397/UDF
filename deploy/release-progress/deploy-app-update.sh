@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Party build 7 cutover. No announcement, Mail change, account seed or Play upload.
+# Party build 8 cutover. No announcement, Mail change, account seed or Play upload.
 set -Eeuo pipefail
 umask 077
 : "${RELEASE:?Unique release ID required}"
@@ -10,11 +10,13 @@ BACKUP="/var/backups/udf/$RELEASE"
 NEXT="/opt/udf/releases/$RELEASE"
 WEB="/var/www/udf/releases/$RELEASE"
 CATALOG="/var/lib/udf-app-releases/$RELEASE"
-APK_SHA=239f430cd406e8529aa4446874969c742507367b365919241490b57b4633b6c5
+: "${APK_SHA:?Verified APK digest required}"
+: "${APK_BYTES:?Verified APK byte count required}"
+[[ "$APK_SHA" =~ ^[a-f0-9]{64}$ && "$APK_BYTES" =~ ^[1-9][0-9]{0,8}$ ]]
 OLD_SHA=127f9b07b03831e8854e1819f2cb97091e9e5c00c30988634b8cfb77226c52b1
 MAIL_SHA=9d1e77b49fe62db4118bad835055a23b6abb46f16e809d34cb4d216916976cd1
 SIGNER=0744136ba322327792b70495877024a9238e08e218418ea939577a4adb66d797
-CANONICAL="udf-7-$APK_SHA.apk"
+CANONICAL="udf-8-$APK_SHA.apk"
 STOPPED=0
 FINISHED=0
 exec 9>/run/lock/udf-release.lock
@@ -59,6 +61,24 @@ done
 cd "$ART"
 printf '%s  SHA256SUMS\n' "$MANIFEST_SHA" | sha256sum -c -
 sha256sum -c SHA256SUMS
+python3 - "$APK_SHA" "$APK_BYTES" "$SIGNER" <<'PY'
+import json, sys
+from pathlib import Path
+release = json.loads(Path('release.json').read_text())
+catalog = json.loads(Path('catalog.json').read_text())
+if release['scope'] != 'full' or release['apiBase'] != '/api' or len(release['sourceCommit']) != 40:
+    raise ValueError('Unexpected source release identity')
+if catalog['baselineVersionCode'] != 6 or len(catalog['releases']) != 1:
+    raise ValueError('Unexpected catalog baseline')
+entry = catalog['releases'][0]
+a = entry['artifact']
+if (a['packageId'], a['versionCode'], a['versionName'], a['sha256'], a['bytes'], a['signerSha256'], entry['publicVerified']) != (
+        'com.udf.party', 8, '1.0.7', sys.argv[1], int(sys.argv[2]), sys.argv[3], False):
+    raise ValueError('Unexpected artifact identity')
+if a['path'] != '/downloads/udf-8-' + sys.argv[1] + '.apk':
+    raise ValueError('Unexpected canonical path')
+print('Source, version and immutable catalog identity verified.')
+PY
 printf '%s  %s\n' "$OLD_SHA" /var/www/udf/downloads/udf.apk "$MAIL_SHA" /var/www/udf/downloads/udf-mail.apk "$APK_SHA" "$CANONICAL" | sha256sum -c -
 for svc in udf-api nginx php8.1-fpm postfix dovecot opendkim; do systemctl is-active --quiet "$svc"; done
 nginx -t
@@ -136,20 +156,20 @@ install -m 644 "$ART/$CANONICAL" "/var/www/udf/downloads/$CANONICAL"
 install -m 644 "$ART/$CANONICAL" "/var/www/udf/downloads/udf.apk.new-$RELEASE"
 mv "/var/www/udf/downloads/udf.apk.new-$RELEASE" /var/www/udf/downloads/udf.apk
 # Confirm public canonical bytes before trusting the catalog. No counted request.
-python3 - "$CATALOG" "$CANONICAL" "$APK_SHA" <<'PY'
+python3 - "$CATALOG" "$CANONICAL" "$APK_SHA" "$APK_BYTES" <<'PY'
 import hashlib, json, os, sys, urllib.request
 from pathlib import Path
-root, name, digest = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+root, name, digest, size = Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args): raise ValueError('Unexpected redirect')
 with urllib.request.build_opener(NoRedirect()).open('https://crm.udf-party.co.za/downloads/'+name, timeout=90) as r:
-    data = r.read(30122629)
-    if r.status != 200 or r.headers.get_content_type() != 'application/vnd.android.package-archive' or len(data) != 30122628 or hashlib.sha256(data).hexdigest() != digest:
+    data = r.read(size + 1)
+    if r.status != 200 or r.headers.get_content_type() != 'application/vnd.android.package-archive' or len(data) != size or hashlib.sha256(data).hexdigest() != digest:
         raise ValueError('Public canonical APK mismatch')
 p = root/'catalog.json'
 catalog = json.loads(p.read_text())
 a = catalog['releases'][0]['artifact']
-if len(catalog['releases']) != 1 or a['sha256'] != digest or a['versionCode'] != 7: raise ValueError('Catalog mismatch')
+if len(catalog['releases']) != 1 or a['sha256'] != digest or a['versionCode'] != 8 or a['bytes'] != size: raise ValueError('Catalog mismatch')
 catalog['releases'][0]['publicVerified'] = True
 t = root/'catalog.json.verified'
 with t.open('x') as f: json.dump(catalog, f, indent=2); f.write('\n')
@@ -207,7 +227,10 @@ for (const [url, path] of [
 }
 const r=await fetch('https://crm.udf-party.co.za/api/public/app-update',{signal:AbortSignal.timeout(20000)});
 if(r.status!==200 || r.headers.get('cache-control')!=='no-store' || await r.json()!==null) throw Error('Inactive update discovery failed');
-console.log('Public web, API health and inactive update discovery passed.');
+const missing=await fetch('https://crm.udf-party.co.za/api/release-ward-probe',{signal:AbortSignal.timeout(10000)});
+const failure=await missing.json();
+if(missing.status!==404 || failure.error?.message!=='This service or item is currently unavailable. Please try again later.' || 'details' in failure.error) throw Error('Safe public error verification failed');
+console.log('Public web, API health, safe errors and inactive update discovery passed.');
 NODE
 printf '%s  %s\n' "$APK_SHA" /var/www/udf/downloads/udf.apk "$MAIL_SHA" /var/www/udf/downloads/udf-mail.apk | sha256sum -c -
 systemctl is-active nginx php8.1-fpm postfix dovecot opendkim > "$BACKUP/services-after.txt"

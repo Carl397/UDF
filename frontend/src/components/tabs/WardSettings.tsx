@@ -1,8 +1,18 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, ApiClientError, apiErrorMessage } from '../../lib/api';
 import type { PublicMeta, WardChangeStatus } from '../../types';
+
+export function wardErrorMessage(error: unknown, action: 'load' | 'save'): string {
+  if (error instanceof ApiClientError &&
+      ([401, 403, 429].includes(error.status) || (action === 'save' && [400, 409].includes(error.status)))) {
+    return apiErrorMessage(error.status, error.code);
+  }
+  return action === 'load'
+    ? 'Unable to load your registered ward right now. Please try again later.'
+    : 'We could not confirm your ward change. Please reload your registered ward before trying again.';
+}
 
 /** Registered membership ward, deliberately separate from map navigation/GPS. */
 export default function WardSettings() {
@@ -31,7 +41,7 @@ export default function WardSettings() {
       setRegions(meta.regions);
       setSelected('');
     }).catch((e) => {
-      if (live) setError(e?.message ?? 'Unable to load your registered ward. Please try again.');
+      if (live) setError(wardErrorMessage(e, 'load'));
     });
     return () => { live = false; alive.current = false; };
   }, [retry]);
@@ -61,7 +71,7 @@ export default function WardSettings() {
       setMessage(result.changed ? 'Your registered ward has been updated.' : 'Your ward is already up to date.');
     } catch (e: unknown) {
       if (!alive.current) return;
-      setError(e instanceof Error ? e.message : 'Unable to change your ward. Please try again.');
+      setError(wardErrorMessage(e, 'save'));
       setConfirming(false);
       setSelected('');
       // A lost response may hide a successful save. Fetch the authoritative

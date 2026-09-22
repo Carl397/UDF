@@ -1,5 +1,5 @@
 import { query } from '../../db/pool.js';
-import { ApiError } from '../../http/errors.js';
+import { ApiError, publicErrorMessage } from '../../http/errors.js';
 import { Permission, roleHasPermission, type Principal } from '../../auth/permissions.js';
 import { principalSeesMember } from '../../auth/scope.js';
 import { recordAudit } from '../../security/audit.js';
@@ -385,7 +385,7 @@ export async function buildBatchCards(
     try {
       cards.push(await buildPartyCard(id, p, false, ctx));
     } catch (err) {
-      const reason = err instanceof ApiError ? err.message : 'not_found';
+      const reason = err instanceof ApiError ? publicErrorMessage(err.status, err.code) : 'This card is currently unavailable.';
       skipped.push({ memberId: id, reason });
     }
   }

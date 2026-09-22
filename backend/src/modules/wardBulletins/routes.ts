@@ -63,9 +63,7 @@ wardBulletinsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listBulletinsQuery.safeParse(req.query);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listBulletins(req.principal!, parsed.data);
       res.json(result);
     } catch (err) {
@@ -95,9 +93,7 @@ wardBulletinsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createBulletinSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const bulletin = await svc.createBulletin(parsed.data, req.principal!, {
         ip: req.ip ?? null,
         userAgent: req.get('user-agent') ?? null,
@@ -115,9 +111,7 @@ wardBulletinsRouter.patch(
   async (req, res, next) => {
     try {
       const parsed = updateBulletinSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const bulletin = await svc.updateBulletin(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null,
         userAgent: req.get('user-agent') ?? null,

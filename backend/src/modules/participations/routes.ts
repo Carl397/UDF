@@ -15,9 +15,7 @@ participationsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listParticipationsQuery.safeParse(req.query);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listParticipations(parsed.data);
       res.json(result);
     } catch (err) { next(err); }
@@ -42,9 +40,7 @@ participationsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createParticipationSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const item = await svc.createParticipation(parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -59,9 +55,7 @@ participationsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createParticipationCommentSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const comment = await svc.addComment(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });

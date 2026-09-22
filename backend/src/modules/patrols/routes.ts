@@ -16,7 +16,7 @@ patrolsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listPatrolsQuery.safeParse(req.query);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listPatrols(req.principal!, parsed.data);
       res.json(result);
     } catch (err) { next(err); }
@@ -64,7 +64,7 @@ patrolsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createPatrolSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const patrol = await svc.createPatrol(parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -79,7 +79,7 @@ patrolsRouter.patch(
   async (req, res, next) => {
     try {
       const parsed = updatePatrolSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const patrol = await svc.updatePatrol(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -107,7 +107,7 @@ patrolsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = addTrackPointSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const result = await svc.addTrackPoint(req.params.id!, parsed.data, req.principal!);
       res.status(201).json(result);
     } catch (err) { next(err); }
@@ -120,7 +120,7 @@ patrolsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = addPatrolStopSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const result = await svc.addStop(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -146,7 +146,7 @@ patrolsRouter.patch(
   async (req, res, next) => {
     try {
       const parsed = updatePatrolStopSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const stop = await svc.updatePatrolStop(req.params.id!, req.params.stopId!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });
@@ -161,7 +161,7 @@ patrolsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = endPatrolSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+      if (!parsed.success) throw parsed.error;
       const patrol = await svc.endPatrol(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });

@@ -52,8 +52,8 @@ def inspect():
 
 
 def verify_release(update_release=False):
-    """Keep historical 1.0.2 verification; updates independently checks 1.0.6."""
-    code, version = (7, '1.0.6') if update_release else (3, '1.0.2')
+    """Keep historical 1.0.2 verification; updates independently checks 1.0.7."""
+    code, version = (8, '1.0.7') if update_release else (3, '1.0.2')
     info = inspect()
     if (info['applicationId'], info['versionCode'], info['versionName'], info['debuggable']) != (
             'com.udf.party', code, version, False):
@@ -156,7 +156,10 @@ def verify_release(update_release=False):
                 bundled = b'\n'.join(scripts)
                 for marker in (b'View data below', b'Back to map', b'Check for updates', b'udf.update.later.',
                                b'/public/app-update', b'Send update notice', b'ward changes remaining',
-                               b'maximum of 3 times', b'following your location', b'CPT-W079', b'udf-map-svg'):
+                               b'maximum of 3 times', b'following your location', b'CPT-W079', b'udf-map-svg',
+                               b'Unable to load your registered ward right now.',
+                               b'We could not confirm your ward change.',
+                               b'This service or item is currently unavailable.', b'ward_change_stale'):
                     if marker not in bundled:
                         raise RuntimeError(f'Update/map/ward marker missing: {marker!r}')
                 if any(marker in bundled.lower() for marker in (b'maplibre', b'mapbox', b'tile.openstreetmap')):

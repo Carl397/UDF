@@ -31,9 +31,7 @@ transparencyRouter.put('/media-policy', authenticate, requirePermission(Permissi
 transparencyRouter.get('/wards/councillor', async (req, res, next) => {
   try {
     const parsed = wardLookupQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-    }
+    if (!parsed.success) throw parsed.error;
     const { lat, lng, accuracyM } = parsed.data;
     const ward = await svc.resolveWardByPoint({ lat, lng, accuracyM });
     if (!ward) {
@@ -65,9 +63,7 @@ transparencyRouter.get('/wards/councillor', async (req, res, next) => {
 transparencyRouter.get('/reverse-geocode', authenticate, async (req, res, next) => {
   try {
     const parsed = wardLookupQuery.safeParse(req.query);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-    }
+    if (!parsed.success) throw parsed.error;
     res.json(await svc.reverseGeocode(parsed.data));
   } catch (err) { next(err); }
 });
@@ -111,9 +107,7 @@ transparencyRouter.get('/wards/:code/detail', authenticate, async (req, res, nex
 transparencyRouter.post('/ratings', authenticate, requirePermission(Permission.RATING_WRITE), async (req, res, next) => {
   try {
     const parsed = createTransparencyRatingSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-    }
+    if (!parsed.success) throw parsed.error;
     const result = await svc.createRating(parsed.data, req.principal!, {
       ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
     });
@@ -125,9 +119,7 @@ transparencyRouter.post('/ratings', authenticate, requirePermission(Permission.R
 transparencyRouter.post('/media', authenticate, requirePermission(Permission.CASE_LOG), async (req, res, next) => {
   try {
     const parsed = uploadMediaSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-    }
+    if (!parsed.success) throw parsed.error;
     const result = await svc.uploadMedia(parsed.data, req.principal!);
     res.status(201).json(result);
   } catch (err) { next(err); }
@@ -156,9 +148,7 @@ transparencyRouter.get('/media/:id', authenticate, async (req, res, next) => {
 transparencyRouter.post('/reports', authenticate, requirePermission(Permission.REPORT_WRITE), async (req, res, next) => {
   try {
     const parsed = createResidentReportSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-    }
+    if (!parsed.success) throw parsed.error;
     const result = await svc.createResidentReport(parsed.data, req.principal!, {
       ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
     });
@@ -230,9 +220,7 @@ transparencyRouter.patch(
   async (req, res, next) => {
     try {
       const parsed = updateResidentReportSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const report = await svc.updateResidentReport(req.params.id!, parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });

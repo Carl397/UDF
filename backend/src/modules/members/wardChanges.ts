@@ -45,13 +45,13 @@ async function readOwnWard(userId: string, run: typeof query): Promise<WardRow> 
        LEFT JOIN regions r ON r.code = m.ward
       WHERE u.id = $1 AND u.role = 'member' AND u.is_active
         AND m.deleted_at IS NULL`, [userId])).rows[0];
-  if (!row) throw ApiError.forbidden('No member profile is linked to this account');
+  if (!row) throw new ApiError(403, 'ward_profile_unavailable', 'No member profile is linked to this account');
   return row;
 }
 
 function requireMember(p: Principal) {
   if (p.role !== Role.MEMBER) {
-    throw ApiError.forbidden('Registered-ward self-service is available to members only');
+    throw new ApiError(403, 'ward_members_only', 'Registered-ward self-service is available to members only');
   }
 }
 
@@ -78,22 +78,22 @@ export async function changeOwnWard(p: Principal, raw: z.infer<typeof changeOwnW
       throw ApiError.unauthorized();
     }
     if (user.role !== Role.MEMBER || !user.member_id) {
-      throw ApiError.forbidden('No member profile is linked to this account');
+      throw new ApiError(403, 'ward_profile_unavailable', 'No member profile is linked to this account');
     }
     await run('SELECT id FROM members WHERE id = $1 FOR UPDATE', [user.member_id]);
     let row = await readOwnWard(p.sub, run);
     const changed = row.ward !== input.wardCode;
     if (changed) {
       if (row.ward !== input.expectedWardCode) {
-        throw ApiError.conflict('Your registered ward has changed. Reload it before trying again.');
+        throw new ApiError(409, 'ward_change_stale', 'Your registered ward has changed. Reload it before trying again.');
       }
       if (row.changes_used >= MAX_WARD_CHANGES) {
-        throw ApiError.conflict('You have used all 3 ward changes. Your registered ward cannot be changed again.');
+        throw new ApiError(409, 'ward_change_limit', 'You have used all 3 ward changes. Your registered ward cannot be changed again.');
       }
       const destination = (await run<{ code: string; name: string; parent_code: string | null }>(
         `SELECT code, name, parent_code FROM regions
           WHERE code = $1 AND level = 'ward' FOR SHARE`, [input.wardCode])).rows[0];
-      if (!destination?.parent_code) throw ApiError.badRequest('Select a valid ward with a parent region');
+      if (!destination?.parent_code) throw new ApiError(400, 'invalid_ward', 'Select a valid ward with a parent region');
       // First assignment is not a change. Existing allowances/history are never
       // reset by a missing ward, reinstatement, logout, reinstall or term date.
       const used = row.changes_used + (row.ward === null ? 0 : 1);

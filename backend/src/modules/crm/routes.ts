@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { asyncHandler } from '../../http/asyncHandler.js';
+import { ApiError, publicErrorMessage } from '../../http/errors.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requirePermission } from '../../middleware/authorize.js';
 import { Permission, Role } from '../../auth/permissions.js';
@@ -169,7 +170,7 @@ router.get(
 
 /**
  * Validate a ward-code list against `regions` (the new TEXT[] columns have no
- * FK). Throws listing every unknown code so the CRM shows one clear error.
+ * FK). Public failures use the shared safe error wording.
  */
 async function assertKnownWards(wardCodes: unknown): Promise<string[] | undefined> {
   if (wardCodes === undefined) return undefined;
@@ -184,7 +185,7 @@ async function assertKnownWards(wardCodes: unknown): Promise<string[] | undefine
   const known = new Set(res.rows.map((r) => r.code));
   const unknown = [...new Set(list)].filter((c) => !known.has(c));
   if (unknown.length) {
-    throw new Error(`unknown ward code${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
+    throw new ApiError(400, 'invalid_ward', 'Unknown ward selection');
   }
   return list;
 }
@@ -205,13 +206,7 @@ router.post(
       res.status(400).json({ error: 'email, password, and role are required' });
       return;
     }
-    let normalizedWards;
-    try {
-      normalizedWards = await assertKnownWards(wardCodes);
-    } catch (err: any) {
-      res.status(400).json({ error: err?.message ?? 'invalid ward codes' });
-      return;
-    }
+    const normalizedWards = await assertKnownWards(wardCodes);
     const user = await userService.createUser(
       {
         email, password, role, fullName, regionCodes, wardCode,
@@ -293,7 +288,10 @@ router.post(
         const msg = String(err?.message ?? err);
         const status = /already exists/i.test(msg) ? 'skipped' : 'error';
         if (status === 'skipped') skipped++; else failed++;
-        results.push({ row: i + 1, email, status, message: msg });
+        const message = status === 'skipped' ? 'An account already exists for this email.'
+          : err instanceof ApiError ? publicErrorMessage(err.status, err.code)
+          : 'Unable to import this row. Please check its details and try again.';
+        results.push({ row: i + 1, email, status, message });
       }
     }
 
@@ -314,13 +312,7 @@ router.patch(
       email, role, wardCode, wardCodes, regionCodes, isActive,
       permissionGrants, permissionRevokes, avatarMediaId, bio, title,
     } = req.body;
-    let normalizedWards;
-    try {
-      normalizedWards = await assertKnownWards(wardCodes);
-    } catch (err: any) {
-      res.status(400).json({ error: err?.message ?? 'invalid ward codes' });
-      return;
-    }
+    const normalizedWards = await assertKnownWards(wardCodes);
     const user = await userService.updateUser(
       req.params.id as string,
       {

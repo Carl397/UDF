@@ -325,7 +325,7 @@ export async function updatePageSections(
   principal: Principal,
 ): Promise<ContentPage | null> {
   const keys = sections.map((s) => s.blockKey);
-  if (new Set(keys).size !== keys.length) throw ApiError.badRequest('A page cannot reference the same block twice');
+  if (new Set(keys).size !== keys.length) throw new ApiError(400, 'duplicate_page_section', 'A page cannot reference the same block twice');
   if (keys.length) {
     const found = await query<{ key: string }>(
       `SELECT key FROM content_blocks WHERE key = ANY($1::text[])`,

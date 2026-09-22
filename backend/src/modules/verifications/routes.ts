@@ -15,9 +15,7 @@ verificationsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listVerificationsQuery.safeParse(req.query);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listVerifications(parsed.data);
       res.json(result);
     } catch (err) { next(err); }
@@ -30,9 +28,7 @@ verificationsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createVerificationSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const verification = await svc.createVerification(parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });

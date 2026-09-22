@@ -15,9 +15,7 @@ ratingsRouter.get(
   async (req, res, next) => {
     try {
       const parsed = listRatingsQuery.safeParse(req.query);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const result = await svc.listRatings(parsed.data);
       res.json(result);
     } catch (err) { next(err); }
@@ -30,9 +28,7 @@ ratingsRouter.post(
   async (req, res, next) => {
     try {
       const parsed = createRatingSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
-      }
+      if (!parsed.success) throw parsed.error;
       const rating = await svc.createRating(parsed.data, req.principal!, {
         ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null,
       });

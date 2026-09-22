@@ -106,7 +106,8 @@ try {
   });
   await test('network failure remains retryable without clearing credentials', async () => {
     globalThis.fetch = async () => { throw new TypeError('Offline'); };
-    await assert.rejects(() => api.transparencyMediaBlob('fixture'), /Offline/);
+    await assert.rejects(() => api.transparencyMediaBlob('fixture'), (error) =>
+      error.code === 'network_error' && error.message === 'Unable to connect. Please check your connection and try again.');
     assert.equal(tokenStore.access, 'expired-access');
   });
   await test('report creation preserves its request ID during access-token replay', async () => {
