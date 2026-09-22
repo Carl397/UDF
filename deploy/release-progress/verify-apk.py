@@ -52,8 +52,8 @@ def inspect():
 
 
 def verify_release(update_release=False):
-    """Keep historical 1.0.2 verification; updates independently checks 1.0.7."""
-    code, version = (8, '1.0.7') if update_release else (3, '1.0.2')
+    """Keep historical 1.0.2 verification; updates independently checks 1.0.8."""
+    code, version = (9, '1.0.8') if update_release else (3, '1.0.2')
     info = inspect()
     if (info['applicationId'], info['versionCode'], info['versionName'], info['debuggable']) != (
             'com.udf.party', code, version, False):

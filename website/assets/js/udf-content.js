@@ -1,12 +1,9 @@
 /*
  * UDF CMS content hydration (marketing site).
  *
- * Progressive enhancement only: every element already ships its real, static
- * copy in the HTML (good for SEO and for the no-JS / not-yet-published case).
- * This script, when it can reach the published content API, replaces that copy
- * with whatever an admin has most recently published — and builds image+text
- * sliders. If the fetch fails for any reason the page is left exactly as it was
- * delivered, so a CMS outage never blanks the marketing site.
+ * Editorial copy and sliders progressively enhance the static marketing page.
+ * The candidate roster is different: only a valid public API response may supply
+ * cards. Loading, unavailable and unpublished states never use shipped people.
  *
  * Hooks an author adds to the static markup:
  *   <h1 data-cms="marketing.home:heroTitle">Service before self</h1>
@@ -19,8 +16,8 @@
  *   <div class="council-grid" data-cms-candidates></div>
  *     → the live "Meet our ward councillors" roster from
  *       GET /public/candidates (CRM-managed rows, active only), each card
- *       carrying its photo when one has been set. Empty/failed responses leave
- *       the statically shipped cards untouched.
+ *       carrying its photo when one has been set. Empty/failed responses show
+ *       distinct states, with a fresh request available from the roster control.
  *
  * Configure on the <script> tag (same origin/config pattern as udf-analytics.js):
  *   <script src="assets/js/udf-content.js"
@@ -34,7 +31,7 @@
     (function () {
       var all = document.getElementsByTagName('script');
       for (var i = all.length - 1; i >= 0; i--) {
-        if (/udf-content\.js$/.test(all[i].src)) return all[i];
+        if (/udf-content\.js(?:[?#]|$)/.test(all[i].src)) return all[i];
       }
       return null;
     })();
@@ -211,18 +208,61 @@
   // ── Ward councillor roster ────────────────────────────────────────────────
   // Rows live in `ward_candidates` and are edited on /crm/candidates; the public
   // feed returns only active people, in the editorial order set there.
+  // Share only an in-flight request: a failed or empty response must be retryable.
   var rosterCache = null;
+  function validRoster(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data) || data.error || !Array.isArray(data.items)) return false;
+    return data.items.every(function (c) {
+      if (!c || typeof c !== 'object' || Array.isArray(c)) return false;
+      if (typeof c.id !== 'string' || !c.id.trim() || typeof c.fullName !== 'string' || !c.fullName.trim()) return false;
+      if (typeof c.hasPhoto !== 'boolean') return false;
+      return ['roleLabel', 'wardsLabel', 'bio'].every(function (key) {
+        return c[key] == null || typeof c[key] === 'string';
+      });
+    });
+  }
+
   function fetchRoster() {
     if (!rosterCache) {
-      rosterCache = fetch(API + '/public/candidates', {
-        headers: { Accept: 'application/json' },
-      })
-        .then(function (res) {
-          return res.ok ? res.json() : null;
-        })
-        .catch(function () {
-          return null;
+      rosterCache = new Promise(function (resolve) {
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var settled = false;
+        var timer = setTimeout(function () {
+          finish({ state: 'unavailable' });
+          if (controller) controller.abort();
+        }, 12000);
+
+        function finish(result) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(result);
+        }
+
+        Promise.resolve().then(function () {
+          var options = { headers: { Accept: 'application/json' }, cache: 'no-store' };
+          if (controller) options.signal = controller.signal;
+          return fetch(API + '/public/candidates', options);
+        }).then(function (res) {
+          if (!res.ok) {
+            finish({ state: 'unavailable' });
+            return null;
+          }
+          return res.json();
+        }).then(function (data) {
+          if (settled) return;
+          if (!validRoster(data)) {
+            finish({ state: 'unavailable' });
+            return;
+          }
+          finish({ state: data.items.length ? 'ready' : 'empty', items: data.items });
+        }).catch(function () {
+          finish({ state: 'unavailable' });
         });
+      }).then(function (result) {
+        rosterCache = null;
+        return result;
+      });
     }
     return rosterCache;
   }
@@ -236,26 +276,29 @@
     return el;
   }
 
+  function candidatePhotoPlaceholder() {
+    var ph = document.createElement('div');
+    ph.className = 'council-photo council-photo-placeholder';
+    ph.textContent = 'Photo not available';
+    return ph;
+  }
+
   function buildCandidate(c) {
     var card = document.createElement('article');
     card.className = 'council-card';
-    // No `reveal` class here: main.js binds its observer at load, and these cards
-    // are appended after the fetch resolves, so an unobserved `.reveal` would
-    // stay at opacity 0 forever. Static cards keep the animation; live ones do not.
+    // No `reveal` class: main.js has already bound its observer when cards arrive.
     if (c.hasPhoto && c.id) {
       var img = document.createElement('img');
       img.className = 'council-photo';
-      img.src = API + '/public/candidates/' + encodeURIComponent(c.id) + '/photo';
       img.alt = c.fullName || '';
       img.loading = 'lazy';
+      img.addEventListener('error', function () {
+        if (img.parentNode === card) card.replaceChild(candidatePhotoPlaceholder(), img);
+      });
+      img.src = API + '/public/candidates/' + encodeURIComponent(c.id) + '/photo';
       card.appendChild(img);
     } else {
-      // Empty photo slot (no initials): cards show only the councillor's name
-      // until a headshot is uploaded.
-      var ph = document.createElement('div');
-      ph.className = 'council-photo';
-      ph.setAttribute('aria-hidden', 'true');
-      card.appendChild(ph);
+      card.appendChild(candidatePhotoPlaceholder());
     }
     text(card, 'h3', null, c.fullName || '');
     if (c.roleLabel) text(card, 'p', 'council-role', c.roleLabel);
@@ -265,16 +308,55 @@
   }
 
   function hydrateRoster(el) {
-    fetchRoster().then(function (data) {
-      var rows = data && Array.isArray(data.items) ? data.items : [];
-      // Nothing published yet (or the API is unreachable) → keep the shipped cards.
-      if (!rows.length) return;
-      el.textContent = '';
-      for (var i = 0; i < rows.length && i < 200; i++) {
-        var c = rows[i] || {};
-        if (typeof c.fullName === 'string' && c.fullName) el.appendChild(buildCandidate(c));
-      }
-    });
+    el.textContent = '';
+    var status = document.createElement('div');
+    status.className = 'council-roster-status';
+    el.appendChild(status);
+    var message = text(status, 'p', null, '');
+    message.setAttribute('role', 'status');
+    message.setAttribute('aria-live', 'polite');
+    message.setAttribute('aria-atomic', 'true');
+    var retry = text(status, 'button', 'btn btn-sm', 'Refresh roster');
+    retry.type = 'button';
+    var loading = false;
+
+    function finish(state, copy) {
+      loading = false;
+      el.setAttribute('data-roster-state', state);
+      el.setAttribute('aria-busy', 'false');
+      message.textContent = copy;
+      retry.setAttribute('aria-disabled', 'false');
+      retry.textContent = state === 'unavailable' ? 'Retry roster' : 'Refresh roster';
+    }
+
+    function load() {
+      if (loading) return;
+      loading = true;
+      el.setAttribute('data-roster-state', 'loading');
+      el.setAttribute('aria-busy', 'true');
+      message.textContent = 'Loading the published candidate roster…';
+      // Keep the control mounted and focusable throughout a keyboard retry.
+      retry.setAttribute('aria-disabled', 'true');
+      retry.textContent = 'Loading roster…';
+      while (el.lastChild !== status) el.removeChild(el.lastChild);
+      fetchRoster().then(function (result) {
+        if (result.state === 'ready') {
+          var cards = document.createDocumentFragment();
+          result.items.forEach(function (c) { cards.appendChild(buildCandidate(c)); });
+          el.appendChild(cards);
+          finish('ready', 'Showing ' + result.items.length + ' published candidate' + (result.items.length === 1 ? '.' : 's.'));
+        } else if (result.state === 'empty') {
+          finish('empty', 'No candidates are currently published. Please check again later.');
+        } else {
+          finish('unavailable', 'The candidate roster is unavailable right now. Please try again.');
+        }
+      }).catch(function () {
+        finish('unavailable', 'The candidate roster is unavailable right now. Please try again.');
+      });
+    }
+
+    retry.addEventListener('click', load);
+    load();
   }
 
   function injectStyles() {

@@ -1,10 +1,10 @@
-import { query, withTransaction } from '../../db/pool.js';
+import { query, withTransaction, withReadSnapshot } from '../../db/pool.js';
 import { ApiError } from '../../http/errors.js';
 import { isNationalScope, Role, type Principal } from '../../auth/permissions.js';
-import { principalSeesWard, visibleWardCodes } from '../../auth/scope.js';
+import { principalSeesWard, wardCodeScope } from '../../auth/scope.js';
 import { councillorForWard, councillorWasFielded } from '../transparency/service.js';
 import { notify } from '../notifications/service.js';
-import type { AcknowledgeBody, HistoryQuery, RollupQuery, SubmitScorecard } from './schemas.js';
+import { rollupQuery, type AcknowledgeBody, type HistoryQuery, type RollupQuery, type SubmitScorecard } from './schemas.js';
 
 /**
  * Councillor performance scorecards (PRD-growth FR-S).
@@ -41,8 +41,8 @@ const MIN_REASON_WORDS = 100;
 // ── Small helpers (same shapes the recruitment/jobs modules use) ──────────
 
 /** Read a feature flag; unknown keys fall back to `fallback`. */
-async function isFlagEnabled(key: string, fallback: boolean): Promise<boolean> {
-  const res = await query<{ enabled: boolean }>(
+async function isFlagEnabled(key: string, fallback: boolean, run = query): Promise<boolean> {
+  const res = await run<{ enabled: boolean }>(
     `SELECT enabled FROM feature_flags WHERE key = $1`,
     [key],
   );
@@ -106,16 +106,16 @@ async function memberForPrincipal(p: Principal): Promise<MemberRef | null> {
 }
 
 /** First day of the current calendar month, `'YYYY-MM-01'`, on the DB clock. */
-async function currentPeriod(): Promise<string> {
-  const res = await query<{ period: string }>(
+async function currentPeriod(run = query): Promise<string> {
+  const res = await run<{ period: string }>(
     `SELECT to_char(date_trunc('month', now()), 'YYYY-MM-DD') AS period`,
   );
   return res.rows[0]!.period;
 }
 
 /** A `YYYY-MM` filter → the `YYYY-MM-01` DATE literal; omitted ⇒ current month. */
-async function resolvePeriod(period?: string): Promise<string> {
-  return period ? `${period}-01` : currentPeriod();
+async function resolvePeriod(period?: string, run = query): Promise<string> {
+  return period ? `${period}-01` : currentPeriod(run);
 }
 
 /** `'ward' | 'region' | 'national'` — the caller's territory, for the response. */
@@ -274,10 +274,10 @@ function toView(r: ScorecardRow, items: ScorecardItemView[]): ScorecardView {
 
 interface ItemRow { scorecard_id: string; category: string; score: number; reason: string | null; }
 
-async function itemsForScorecards(ids: string[]): Promise<Map<string, ScorecardItemView[]>> {
+async function itemsForScorecards(ids: string[], run = query): Promise<Map<string, ScorecardItemView[]>> {
   const out = new Map<string, ScorecardItemView[]>();
   if (ids.length === 0) return out;
-  const res = await query<ItemRow>(
+  const res = await run<ItemRow>(
     `SELECT scorecard_id, category::text AS category, score, reason
        FROM councillor_scorecard_items
       WHERE scorecard_id = ANY($1::uuid[])
@@ -483,8 +483,10 @@ export async function history(p: Principal, q: HistoryQuery): Promise<{ scorecar
  * `ward` filter must sit inside the caller's scope or it is a 403 (a ward
  * councillor cannot peek at a neighbouring ward by naming it).
  */
-async function scopedWards(p: Principal, wardFilter?: string): Promise<string[] | null> {
-  const wards = await visibleWardCodes(p);
+async function scopedWards(p: Principal, wardFilter: string | undefined, run: typeof query): Promise<string[] | null> {
+  const scope = await wardCodeScope(p, 'r.code', 1);
+  const wards = isNationalScope(p) ? null : p.wardCode ? [p.wardCode] :
+    (await run<{ code: string }>(`SELECT r.code FROM regions r WHERE r.level = 'ward'${scope.sql}`, scope.params)).rows.map((r) => r.code);
   if (wardFilter) {
     if (wards !== null && !wards.includes(wardFilter)) throw httpError(403, 'Ward outside your scope');
     return [wardFilter];
@@ -493,10 +495,31 @@ async function scopedWards(p: Principal, wardFilter?: string): Promise<string[] 
 }
 
 /** A `ward_code = ANY(...)` fragment on alias `s`; empty for national scope. */
-function wardClause(wards: string[] | null, idx: number): { sql: string; params: unknown[]; next: number } {
-  if (wards === null) return { sql: '', params: [], next: idx };
-  if (wards.length === 0) return { sql: ' AND FALSE', params: [], next: idx };
-  return { sql: ` AND s.ward_code = ANY($${idx}::text[])`, params: [wards], next: idx + 1 };
+const ROLLUP_WHERE = `s.period_month = $1::date
+  AND ($2::text[] IS NULL OR s.ward_code = ANY($2::text[]))
+  AND ($3::text IS NULL OR s.status = $3)`;
+
+interface RollupMeta {
+  period: string;
+  scope: 'ward' | 'region' | 'national';
+  wardFilter: string | null;
+  statusFilter: RollupQuery['status'] | null;
+  asOf: string;
+}
+
+function readRollup<T>(p: Principal, input: RollupQuery,
+  read: (run: typeof query, q: RollupQuery, meta: RollupMeta, params: unknown[]) => Promise<T>): Promise<T> {
+  const q = rollupQuery.parse(input);
+  return withReadSnapshot(async (run) => {
+    if (!(await isFlagEnabled('rating.scorecard', true, run))) {
+      throw httpError(403, 'Councillor scorecards are currently disabled');
+    }
+    const period = await resolvePeriod(q.period, run);
+    const wards = await scopedWards(p, q.ward, run);
+    const { rows: [clock] } = await run<{ as_of: Date }>('SELECT now() AS as_of');
+    return read(run, q, { period, scope: scopeLabel(p), wardFilter: q.ward ?? null,
+      statusFilter: q.status ?? null, asOf: clock!.as_of.toISOString() }, [period, wards, q.status ?? null]);
+  });
 }
 
 // ── FR-S6/S7: the councillor/staff acknowledgement inbox ───────────────────
@@ -521,77 +544,49 @@ export interface InboxRow {
   items: ScorecardItemView[];
 }
 
-export interface InboxView {
-  period: string;
-  scope: 'ward' | 'region' | 'national';
-  wardFilter: string | null;
+export interface InboxView extends RollupMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
   rows: InboxRow[];
 }
 
 export async function inbox(p: Principal, q: RollupQuery): Promise<InboxView> {
-  if (!(await isFlagEnabled('rating.scorecard', true))) {
-    throw httpError(403, 'Councillor scorecards are currently disabled');
-  }
-  const period = await resolvePeriod(q.period);
-  const wards = await scopedWards(p, q.ward);
-
-  const params: unknown[] = [period];
-  let idx = 2;
-  const wc = wardClause(wards, idx);
-  params.push(...wc.params);
-  idx = wc.next;
-  let statusSql = '';
-  if (q.status) {
-    statusSql = ` AND s.status = $${idx}`;
-    params.push(q.status);
-    idx++;
-  }
-  params.push(Math.min(Math.max(q.limit, 1), 200));
-
-  const res = await query<{
-    id: string; period: string; status: string; ward_code: string; ward_name: string | null;
-    councillor_member_id: string | null; share_name: boolean; member_public_code: string | null;
-    submitted_at: string; viewed_at: string | null; ack_at: string | null; ack_note: string | null;
-  }>(
-    `SELECT s.id, to_char(s.period_month, 'YYYY-MM-DD') AS period, s.status, s.ward_code,
-            r.name AS ward_name, s.councillor_member_id, s.share_name,
-            m.public_code AS member_public_code,
-            s.created_at::text AS submitted_at, s.viewed_at::text, s.ack_at::text, s.ack_note
-       FROM councillor_scorecards s
-       LEFT JOIN regions r ON r.code = s.ward_code
-       LEFT JOIN members m ON m.id = s.member_id
-      WHERE s.period_month = $1::date ${wc.sql} ${statusSql}
-      ORDER BY s.created_at DESC
-      LIMIT $${idx}`,
-    params,
-  );
-
-  const items = await itemsForScorecards(res.rows.map((r) => r.id));
-  const rows: InboxRow[] = res.rows.map((r) => {
-    const its = items.get(r.id) ?? [];
-    const scores = its.map((i) => i.score);
-    const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
-    return {
-      id: r.id,
-      period: r.period,
-      status: r.status,
-      wardCode: r.ward_code,
-      wardName: r.ward_name,
-      councillorMemberId: r.councillor_member_id,
-      shareName: r.share_name,
+  return readRollup(p, q, async (run, filter, meta, params) => {
+    const count = await run<{ total: number }>(
+      `SELECT count(*)::int AS total FROM councillor_scorecards s WHERE ${ROLLUP_WHERE}`, params);
+    const res = await run<{
+      id: string; period: string; status: string; ward_code: string; ward_name: string | null;
+      councillor_member_id: string | null; share_name: boolean; member_public_code: string | null;
+      submitted_at: string; viewed_at: string | null; ack_at: string | null; ack_note: string | null;
+      average: number | null; low_count: number;
+    }>(
+      `SELECT s.id, to_char(s.period_month, 'YYYY-MM-DD') AS period, s.status, s.ward_code,
+              r.name AS ward_name, s.councillor_member_id, s.share_name,
+              CASE WHEN s.share_name THEN m.public_code END AS member_public_code,
+              s.created_at::text AS submitted_at, s.viewed_at::text, s.ack_at::text, s.ack_note,
+              (SELECT round(avg(i.score), 2)::float8 FROM councillor_scorecard_items i WHERE i.scorecard_id = s.id) AS average,
+              (SELECT count(*)::int FROM councillor_scorecard_items i WHERE i.scorecard_id = s.id AND i.score <= 2) AS low_count
+         FROM councillor_scorecards s
+         LEFT JOIN regions r ON r.code = s.ward_code
+         LEFT JOIN members m ON m.id = s.member_id
+        WHERE ${ROLLUP_WHERE}
+        ORDER BY s.created_at DESC, s.id
+        LIMIT $4 OFFSET $5`, [...params, filter.limit, filter.offset]);
+    const items = await itemsForScorecards(res.rows.map((r) => r.id), run);
+    const rows: InboxRow[] = res.rows.map((r) => ({
+      id: r.id, period: r.period, status: r.status, wardCode: r.ward_code, wardName: r.ward_name,
+      councillorMemberId: r.councillor_member_id, shareName: r.share_name,
       // FR-S7: identity (here, the public code) only when the member opted in.
       memberPublicCode: r.share_name ? r.member_public_code : null,
-      submittedAt: r.submitted_at,
-      viewedAt: r.viewed_at,
-      ackAt: r.ack_at,
-      ackNote: r.ack_note,
-      average: avg === null ? null : Math.round(avg * 100) / 100,
-      lowCount: its.filter((i) => i.score <= 2).length,
-      items: its,
-    };
+      submittedAt: r.submitted_at, viewedAt: r.viewed_at, ackAt: r.ack_at, ackNote: r.ack_note,
+      average: r.average, lowCount: r.low_count, items: items.get(r.id) ?? [],
+    }));
+    const total = count.rows[0]!.total;
+    return { ...meta, total, limit: filter.limit, offset: filter.offset,
+      hasMore: filter.offset + rows.length < total, rows };
   });
-
-  return { period, scope: scopeLabel(p), wardFilter: q.ward ?? null, rows };
 }
 
 // ── FR-S8: category rollups ────────────────────────────────────────────────
@@ -600,6 +595,7 @@ export interface CategorySummary {
   category: string;
   label: string;
   position: number;
+  active: boolean;
   count: number;
   average: number | null;
   /** Score histogram, keys `'1'`..`'5'`. */
@@ -607,83 +603,46 @@ export interface CategorySummary {
   lowCount: number;
 }
 
-export interface SummaryView {
-  period: string;
-  scope: 'ward' | 'region' | 'national';
-  wardFilter: string | null;
+export interface SummaryView extends RollupMeta {
   scorecards: number;
+  itemCount: number;
+  lowScoreItems: number;
+  lowScorecards: number;
+  awaitingAcknowledgement: number;
   overallAverage: number | null;
   categories: CategorySummary[];
 }
 
 export async function summary(p: Principal, q: RollupQuery): Promise<SummaryView> {
-  if (!(await isFlagEnabled('rating.scorecard', true))) {
-    throw httpError(403, 'Councillor scorecards are currently disabled');
-  }
-  const period = await resolvePeriod(q.period);
-  const wards = await scopedWards(p, q.ward);
-  const cats = await activeCategories();
-
-  const params: unknown[] = [period];
-  const wc = wardClause(wards, 2);
-  params.push(...wc.params);
-
-  const catRes = await query<{
-    category: string; count: string; average: number | null; low_count: string;
-    s1: string; s2: string; s3: string; s4: string; s5: string;
-  }>(
-    `SELECT i.category::text AS category,
-            count(*)::text AS count,
-            round(avg(i.score), 2)::float AS average,
-            count(*) FILTER (WHERE i.score <= 2)::text AS low_count,
-            count(*) FILTER (WHERE i.score = 1)::text AS s1,
-            count(*) FILTER (WHERE i.score = 2)::text AS s2,
-            count(*) FILTER (WHERE i.score = 3)::text AS s3,
-            count(*) FILTER (WHERE i.score = 4)::text AS s4,
-            count(*) FILTER (WHERE i.score = 5)::text AS s5
-       FROM councillor_scorecard_items i
-       JOIN councillor_scorecards s ON s.id = i.scorecard_id
-      WHERE s.period_month = $1::date ${wc.sql}
-      GROUP BY i.category`,
-    params,
-  );
-  const countRes = await query<{ c: string }>(
-    `SELECT count(*)::text AS c FROM councillor_scorecards s
-      WHERE s.period_month = $1::date ${wc.sql}`,
-    params,
-  );
-
-  const byCat = new Map(catRes.rows.map((r) => [r.category, r]));
-  const categories: CategorySummary[] = cats.map((c) => {
-    const r = byCat.get(c.code);
-    return {
-      category: c.code,
-      label: c.label,
-      position: c.position,
-      count: Number(r?.count ?? 0),
-      average: r?.average ?? null,
-      distribution: {
-        '1': Number(r?.s1 ?? 0), '2': Number(r?.s2 ?? 0), '3': Number(r?.s3 ?? 0),
-        '4': Number(r?.s4 ?? 0), '5': Number(r?.s5 ?? 0),
-      },
-      lowCount: Number(r?.low_count ?? 0),
-    };
+  return readRollup(p, q, async (run, _filter, meta, params) => {
+    const { rows: [totals] } = await run<Omit<SummaryView, keyof RollupMeta | 'categories'>>(
+      `WITH cards AS (SELECT s.id, s.status FROM councillor_scorecards s WHERE ${ROLLUP_WHERE}),
+       items AS (SELECT i.* FROM councillor_scorecard_items i JOIN cards c ON c.id = i.scorecard_id)
+       SELECT (SELECT count(*)::int FROM cards) AS scorecards,
+         count(*)::int AS "itemCount", count(*) FILTER (WHERE score <= 2)::int AS "lowScoreItems",
+         count(DISTINCT scorecard_id) FILTER (WHERE score <= 2)::int AS "lowScorecards",
+         (SELECT count(*)::int FROM cards WHERE status IN ('submitted','viewed')) AS "awaitingAcknowledgement",
+         round(avg(score), 2)::float8 AS "overallAverage" FROM items`, params);
+    const catRes = await run<CategorySummary>(
+      `WITH items AS (
+         SELECT i.* FROM councillor_scorecard_items i JOIN councillor_scorecards s ON s.id = i.scorecard_id
+         WHERE ${ROLLUP_WHERE}
+       ), scores AS (
+         SELECT category, count(*)::int AS count, round(avg(score), 2)::float8 AS average,
+           count(*) FILTER (WHERE score <= 2)::int AS "lowCount",
+           json_build_object('1', count(*) FILTER (WHERE score=1), '2', count(*) FILTER (WHERE score=2),
+             '3', count(*) FILTER (WHERE score=3), '4', count(*) FILTER (WHERE score=4),
+             '5', count(*) FILTER (WHERE score=5)) AS distribution
+         FROM items GROUP BY category
+       ) SELECT COALESCE(c.code, s.category)::text AS category,
+           COALESCE(c.label, s.category::text) AS label, COALESCE(c.position, 2147483647) AS position,
+           COALESCE(c.is_active, false) AS active, COALESCE(s.count, 0) AS count, s.average,
+           COALESCE(s."lowCount", 0) AS "lowCount",
+           COALESCE(s.distribution, '{"1":0,"2":0,"3":0,"4":0,"5":0}'::json) AS distribution
+         FROM rating_category_config c FULL JOIN scores s ON s.category = c.code
+         WHERE c.is_active OR s.category IS NOT NULL ORDER BY position, category`, params);
+    return { ...meta, ...totals!, categories: catRes.rows };
   });
-
-  const rated = categories.filter((c) => c.count > 0);
-  const overall = rated.length
-    ? rated.reduce((sum, c) => sum + (c.average ?? 0) * c.count, 0) /
-      rated.reduce((sum, c) => sum + c.count, 0)
-    : null;
-
-  return {
-    period,
-    scope: scopeLabel(p),
-    wardFilter: q.ward ?? null,
-    scorecards: Number(countRes.rows[0]?.c ?? 0),
-    overallAverage: overall === null ? null : Math.round(overall * 100) / 100,
-    categories,
-  };
 }
 
 // ── FR-S8: the ≤2 reasons queue ────────────────────────────────────────────
@@ -702,68 +661,38 @@ export interface LowReasonRow {
   memberPublicCode: string | null;
 }
 
-export interface LowReasonsView {
-  period: string;
-  scope: 'ward' | 'region' | 'national';
-  wardFilter: string | null;
+export interface LowReasonsView extends RollupMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
   rows: LowReasonRow[];
 }
 
 export async function lowReasons(p: Principal, q: RollupQuery): Promise<LowReasonsView> {
-  if (!(await isFlagEnabled('rating.scorecard', true))) {
-    throw httpError(403, 'Councillor scorecards are currently disabled');
-  }
-  const period = await resolvePeriod(q.period);
-  const wards = await scopedWards(p, q.ward);
-  const cats = await activeCategories();
-
-  const params: unknown[] = [period];
-  let idx = 2;
-  const wc = wardClause(wards, idx);
-  params.push(...wc.params);
-  idx = wc.next;
-  let statusSql = '';
-  if (q.status) {
-    statusSql = ` AND s.status = $${idx}`;
-    params.push(q.status);
-    idx++;
-  }
-  params.push(Math.min(Math.max(q.limit, 1), 200));
-
-  const res = await query<{
-    scorecard_id: string; category: string; score: number; reason: string | null;
-    ward_code: string; ward_name: string | null; period: string; status: string;
-    share_name: boolean; member_public_code: string | null;
-  }>(
-    `SELECT s.id AS scorecard_id, i.category::text AS category, i.score, i.reason,
-            s.ward_code, r.name AS ward_name,
-            to_char(s.period_month, 'YYYY-MM-DD') AS period, s.status, s.share_name,
-            m.public_code AS member_public_code
+  return readRollup(p, q, async (run, filter, meta, params) => {
+    const count = await run<{ total: number }>(
+      `SELECT count(*)::int AS total FROM councillor_scorecard_items i
+       JOIN councillor_scorecards s ON s.id = i.scorecard_id
+       WHERE i.score <= 2 AND ${ROLLUP_WHERE}`, params);
+    const res = await run<LowReasonRow>(
+      `SELECT s.id AS "scorecardId", i.category::text AS category,
+         COALESCE(c.label, i.category::text) AS label, i.score, i.reason,
+         s.ward_code AS "wardCode", r.name AS "wardName",
+         to_char(s.period_month, 'YYYY-MM-DD') AS period, s.status, s.share_name AS "shareName",
+         CASE WHEN s.share_name THEN m.public_code END AS "memberPublicCode"
        FROM councillor_scorecard_items i
        JOIN councillor_scorecards s ON s.id = i.scorecard_id
+       LEFT JOIN rating_category_config c ON c.code = i.category
        LEFT JOIN regions r ON r.code = s.ward_code
        LEFT JOIN members m ON m.id = s.member_id
-      WHERE i.score <= 2 AND s.period_month = $1::date ${wc.sql} ${statusSql}
-      ORDER BY i.score ASC, s.created_at DESC
-      LIMIT $${idx}`,
-    params,
-  );
-
-  const rows: LowReasonRow[] = res.rows.map((r) => ({
-    scorecardId: r.scorecard_id,
-    category: r.category,
-    label: labelFor(cats, r.category),
-    score: Number(r.score),
-    reason: r.reason,
-    wardCode: r.ward_code,
-    wardName: r.ward_name,
-    period: r.period,
-    status: r.status,
-    shareName: r.share_name,
-    memberPublicCode: r.share_name ? r.member_public_code : null,
-  }));
-
-  return { period, scope: scopeLabel(p), wardFilter: q.ward ?? null, rows };
+       WHERE i.score <= 2 AND ${ROLLUP_WHERE}
+       ORDER BY i.score ASC, s.created_at DESC, s.id, i.category
+       LIMIT $4 OFFSET $5`, [...params, filter.limit, filter.offset]);
+    const total = count.rows[0]!.total;
+    return { ...meta, total, limit: filter.limit, offset: filter.offset,
+      hasMore: filter.offset + res.rows.length < total, rows: res.rows };
+  });
 }
 
 // ── FR-S6: view + acknowledge transitions ──────────────────────────────────

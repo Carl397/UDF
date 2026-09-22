@@ -6,7 +6,7 @@ import express from 'express';
 import { createApp } from '../src/app.ts';
 import { signAccessToken } from '../src/auth/tokens.ts';
 import { env } from '../src/config/env.ts';
-import { pool } from '../src/db/pool.ts';
+import { pool, withReadSnapshot } from '../src/db/pool.ts';
 import { Permission, Role, permissionsForRole, modulesForRole, effectivePermissions, PERMISSION_MODULE, ModuleKey } from '../src/auth/permissions.ts';
 import * as reports from '../src/modules/transparency/service.ts';
 import * as content from '../src/modules/content/service.ts';
@@ -24,6 +24,13 @@ import { sealRecord } from '../src/security/encryption.ts';
 import { getRegionSummary } from '../src/modules/geo/service.ts';
 import { regionSummarySchema } from '../src/modules/geo/schemas.ts';
 import { rollupAnalyticsDay, rollupDownloadDay } from '../src/modules/analytics/service.ts';
+import * as scorecards from '../src/modules/scorecards/service.ts';
+import { rollupQuery } from '../src/modules/scorecards/schemas.ts';
+import { getWardSummary, wardSummaryQuery } from '../src/modules/crm/aggregates.ts';
+import { listRatings, getAverageRating } from '../src/modules/ratings/service.ts';
+import { listVerifications } from '../src/modules/verifications/service.ts';
+import { listRatingsQuery } from '../src/modules/ratings/schemas.ts';
+import { listVerificationsQuery } from '../src/modules/verifications/schemas.ts';
 
 // All service calls share one rollback-only connection. Nested service
 // transactions become savepoints; no fixture or audit record is committed.
@@ -38,7 +45,14 @@ pool.query = client.query.bind(client);
 pool.connect = async () => {
   const name = `workflow_${++savepoint}`;
   return {
-    query(text, values) {
+    async query(text, values) {
+      // The fixture-owning outer transaction is already repeatable-read. A nested
+      // read-only service transaction cannot change its mode after fixture writes.
+      if (text === 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY') {
+        const result = await client.query('SHOW transaction_isolation');
+        assert.equal(result.rows[0].transaction_isolation, 'repeatable read');
+        return result;
+      }
       if (text === 'BEGIN') return client.query(`SAVEPOINT ${name}`);
       if (text === 'COMMIT') return client.query(`RELEASE SAVEPOINT ${name}`);
       if (text === 'ROLLBACK') return client.query(`ROLLBACK TO SAVEPOINT ${name}`);
@@ -84,7 +98,7 @@ const apply = (input, principal = councilor) => applyReportAction(report.id, upd
 const photo = { captureMode: 'photo', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC' };
 
 try {
-  await client.query('BEGIN');
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
   await client.query("INSERT INTO regions(code,name,level) VALUES ($1,'Regression subcouncil','subcouncil')", [region]);
   await client.query("INSERT INTO regions(code,name,level,parent_code) VALUES ($1,'Ward QA1','ward',$3),($2,'Ward QA2','ward',$3)", [ward, outsideWard, region]);
   for (const principal of [member, councilor, peer, outside, admin, coordinator, superadmin]) {
@@ -633,11 +647,409 @@ try {
     assert.equal((await reports.getResidentReport(managedId,outside)).id,managedId);
     await client.query('UPDATE users SET ward_code=$2 WHERE id=$1',[outside.sub,outsideWard]);
   });
+  // Live-data repair fixtures are local-only and rolled back with this harness.
+  const dataRegion = `QA-${suffix}-DATA`;
+  const dataWard = `QA-${suffix}-D1`;
+  const dataOther = `QA-${suffix}-D2`;
+  const dataEmpty = `QA-${suffix}-D3`;
+  await client.query("INSERT INTO regions(code,name,level) VALUES ($1,'Data regression region','region')", [dataRegion]);
+  await client.query(`INSERT INTO regions(code,name,level,parent_code) VALUES
+    ($1,'Data one','ward',$4),($2,'Data two','ward',$4),($3,'Data empty','ward',$4)`, [dataWard,dataOther,dataEmpty,dataRegion]);
+  const dataCouncil = { ...councilor, wardCode:dataWard, wardCodes:[dataWard,dataOther], regionCodes:[dataRegion] };
+  const dataRegional = { ...admin, role:Role.REGIONAL_ORGANIZER, wardCode:null, regionCodes:[dataRegion] };
+  const dataAnalyst = { ...dataCouncil, role:Role.ANALYST, permissions:[Permission.OVERVIEW_READ,Permission.MEMBER_READ,Permission.CASE_READ] };
+  const noTerritory = { ...dataCouncil, wardCode:null, wardCodes:[dataWard], regionCodes:[] };
+  const zeroMetrics = {total:0,open:0,resolved:0,slaBreached:0,resolutionRatePct:null};
+  const month = '2024-02';
+  const sq = (extra={}) => rollupQuery.parse({period:month,...extra});
+  const cardMembers = Array.from({length:205},()=>randomUUID());
+  const cardIds = Array.from({length:205},()=>randomUUID());
+  const categoryBefore = (await client.query('SELECT code,is_active,label FROM rating_category_config')).rows;
+  await client.query("INSERT INTO feature_flags(key,enabled) VALUES ('rating.scorecard',true) ON CONFLICT(key) DO UPDATE SET enabled=true");
+  await client.query("UPDATE rating_category_config SET is_active=(code<>'communication' AND code<>'presence'), label=CASE WHEN code='communication' THEN 'Current communication label' ELSE label END");
+  await client.query(`INSERT INTO members(id,ward,status,tier,public_code)
+    SELECT id,$2,'active','voter', 'QA-' || n::text || '-' || $3
+    FROM unnest($1::uuid[]) WITH ORDINALITY x(id,n)`, [cardMembers,dataWard,suffix]);
+  await client.query(`INSERT INTO councillor_scorecards(id,member_id,ward_code,period_month,status,share_name,created_at)
+    SELECT c.id,m.id,$3,$4::date, CASE WHEN c.n%3=0 THEN 'acknowledged' WHEN c.n%3=1 THEN 'submitted' ELSE 'viewed' END,
+      c.n=1,'2024-02-10T10:00:00Z'
+    FROM unnest($1::uuid[]) WITH ORDINALITY c(id,n)
+    JOIN unnest($2::uuid[]) WITH ORDINALITY m(id,n) USING(n)`, [cardIds,cardMembers,dataWard,`${month}-01`]);
+  await client.query(`INSERT INTO councillor_scorecard_items(scorecard_id,category,score,reason)
+    SELECT id,'accessibility',1,repeat('reason ',100) FROM unnest($1::uuid[]) WITH ORDINALITY x(id,n) WHERE n<=197`, [cardIds]);
+  await client.query(`INSERT INTO councillor_scorecard_items(scorecard_id,category,score,reason)
+    SELECT id,'communication',CASE WHEN n=3 THEN 2 ELSE 1 END,repeat('reason ',100)
+    FROM unnest($1::uuid[]) WITH ORDINALITY x(id,n) WHERE n<=3`, [cardIds]);
+  await client.query(`INSERT INTO councillor_scorecards(member_id,ward_code,period_month,status)
+    VALUES ($1,$2,$3::date,'submitted'),($1,$4,'2024-03-01','submitted')`, [memberId,dataOther,`${month}-01`,dataWard]);
+
+  await test('read snapshots use an actual repeatable-read read-only connection and stable database clock', async () => {
+    const rollbackConnect=pool.connect;
+    pool.connect=originalConnect;
+    try {
+      await withReadSnapshot(async (run) => {
+        const read=()=>run(`SELECT current_setting('transaction_isolation') AS isolation,
+          current_setting('transaction_read_only') AS readonly, txid_current_snapshot()::text AS snapshot,
+          now()::text AS clock`);
+        const first=(await read()).rows[0];
+        await run('SELECT pg_sleep(0.002)');
+        assert.deepEqual((await read()).rows[0],first);
+        assert.equal(first.isolation,'repeatable read'); assert.equal(first.readonly,'on');
+      });
+    } finally { pool.connect=rollbackConnect; }
+  });
+  await test('scorecard filters validate real months, ward, status and pagination', () => {
+    for (const invalid of [{period:'0000-01'},{period:'2024-00'},{period:'2024-13'},{period:'2024-2'},
+      {period:'2024-02-01'},{ward:' '},{ward:'x'.repeat(33)},{status:'all'},{limit:201},{offset:-1},{offset:0.5}]) {
+      assert.equal(rollupQuery.safeParse(invalid).success,false,JSON.stringify(invalid));
+    }
+    assert.equal(sq({ward:` ${dataWard} `}).ward,dataWard);
+    assert.equal(sq().offset,0); assert.equal(sq().limit,100);
+    assert.equal(sq({period:'0001-01'}).period,'0001-01');
+    assert.equal(sq({period:'2024-02'}).period,'2024-02');
+  });
+  await test('205 scorecards paginate stably, count cards, and retain opt-in anonymity', async () => {
+    const first=await scorecards.inbox(dataCouncil,sq({limit:200}));
+    const last=await scorecards.inbox(dataCouncil,sq({limit:200,offset:200}));
+    assert.equal(first.total,205); assert.equal(first.rows.length,200); assert.equal(first.hasMore,true);
+    assert.equal(last.rows.length,5); assert.equal(last.hasMore,false); assert.equal(last.total,205);
+    assert.equal(first.offset,0); assert.equal(first.limit,200); assert.equal(first.statusFilter,null);
+    const all=[...first.rows,...last.rows];
+    assert.deepEqual(all.map(r=>r.id),[...cardIds].sort());
+    assert.deepEqual((await scorecards.inbox(dataCouncil,sq({limit:200}))).rows,first.rows);
+    assert.ok(all.filter(r=>!r.shareName).every(r=>r.memberPublicCode===null));
+    assert.ok(all.find(r=>r.id===cardIds[0]).memberPublicCode);
+    assert.ok(all.every(r=>!('memberId' in r) && !('fullName' in r) && !('sealed_pii' in r)));
+    assert.equal(all.find(r=>r.id===cardIds[204]).average,null);
+    assert.ok(Number.isFinite(Date.parse(first.asOf))); assert.equal(first.period,`${month}-01`);
+    const beyond=await scorecards.inbox(dataCouncil,sq({offset:999}));
+    assert.equal(beyond.total,205); assert.equal(beyond.rows.length,0); assert.equal(beyond.hasMore,false);
+  });
+  await test('summary averages raw unequal samples once and retains represented inactive categories', async () => {
+    const result=await scorecards.summary(dataCouncil,sq({limit:1,offset:999}));
+    assert.equal(result.scorecards,205); assert.equal(result.itemCount,200);
+    assert.equal(result.lowScoreItems,200); assert.equal(result.lowScorecards,197);
+    assert.equal(result.awaitingAcknowledgement,137); assert.equal(result.overallAverage,1.01);
+    const comm=result.categories.find(c=>c.category==='communication');
+    assert.equal(comm.average,1.33); assert.equal(comm.count,3); assert.equal(comm.active,false);
+    assert.equal(comm.label,'Current communication label');
+    assert.deepEqual(comm.distribution,{'1':2,'2':1,'3':0,'4':0,'5':0});
+    assert.ok(!result.categories.some(c=>c.category==='presence'));
+    for(const category of result.categories) assert.deepEqual(Object.keys(category.distribution),['1','2','3','4','5']);
+    assert.equal(result.categories.find(c=>c.category==='accountability').average,null);
+  });
+  await test('inbox, summary and low-reasons share each status/ward/month predicate and count meaning', async () => {
+    for(const status of [undefined,'submitted','viewed','acknowledged']) {
+      const filter=sq({ward:dataWard,status,limit:100});
+      const inbox=await scorecards.inbox(dataCouncil,filter);
+      const summary=await scorecards.summary(dataCouncil,filter);
+      const reasons=await scorecards.lowReasons(dataCouncil,filter);
+      assert.equal(inbox.total,summary.scorecards); assert.equal(reasons.total,summary.lowScoreItems);
+      assert.equal(summary.statusFilter,status??null); assert.equal(reasons.statusFilter,status??null);
+      assert.ok(inbox.rows.every(r=>!status||r.status===status)); assert.ok(reasons.rows.every(r=>!status||r.status===status));
+      if(status==='acknowledged') assert.equal(summary.awaitingAcknowledgement,0);
+      if(status==='submitted'||status==='viewed') assert.equal(summary.awaitingAcknowledgement,summary.scorecards);
+      assert.equal(reasons.hasMore,reasons.total>100);
+    }
+    const one=await scorecards.lowReasons(dataCouncil,sq({limit:100}));
+    const two=await scorecards.lowReasons(dataCouncil,sq({limit:100,offset:100}));
+    assert.equal(new Set([...one.rows,...two.rows].map(r=>`${r.scorecardId}:${r.category}`)).size,200);
+    const expected=(await client.query(`SELECT s.id AS "scorecardId",i.category::text AS category
+      FROM councillor_scorecards s JOIN councillor_scorecard_items i ON i.scorecard_id=s.id
+      WHERE s.ward_code=$1 AND s.period_month=$2::date AND i.score<=2
+      ORDER BY i.score,s.created_at DESC,s.id,i.category`,[dataWard,`${month}-01`])).rows;
+    assert.deepEqual([...one.rows,...two.rows].map(({scorecardId,category})=>({scorecardId,category})),expected);
+    assert.ok(one.rows.filter(r=>!r.shareName).every(r=>r.memberPublicCode===null));
+    const empty=await scorecards.lowReasons(dataCouncil,sq({offset:999}));
+    assert.equal(empty.total,200); assert.equal(empty.hasMore,false); assert.deepEqual(empty.rows,[]);
+  });
+  await test('scorecard primary-only, outside, empty territory and no-sample semantics', async () => {
+    for(const read of [scorecards.inbox,scorecards.summary,scorecards.lowReasons]) {
+      await rejects(()=>read(dataCouncil,sq({ward:dataOther})),403);
+      await rejects(()=>read(noTerritory,sq({ward:dataWard})),403);
+    }
+    assert.equal((await scorecards.inbox(noTerritory,sq())).total,0);
+    assert.equal((await scorecards.inbox(dataRegional,sq())).total,206);
+    const result=await scorecards.summary(dataCouncil,sq({period:'2023-01'}));
+    assert.equal(result.scorecards,0); assert.equal(result.itemCount,0); assert.equal(result.lowScoreItems,0);
+    assert.equal(result.lowScorecards,0); assert.equal(result.awaitingAcknowledgement,0); assert.equal(result.overallAverage,null);
+    assert.ok(result.categories.every(c=>c.count===0&&c.average===null&&Object.values(c.distribution).every(n=>n===0)));
+    assert.ok(result.categories.every(c=>c.active));
+    const current=await scorecards.summary(dataCouncil,rollupQuery.parse({}));
+    assert.equal(current.period,(await client.query("SELECT to_char(date_trunc('month',now()),'YYYY-MM-DD') AS p")).rows[0].p);
+  });
+  await test('current category-code fallback works without a taxonomy row', async () => {
+    await client.query("DELETE FROM rating_category_config WHERE code='communication'");
+    const summary=await scorecards.summary(dataCouncil,sq());
+    assert.equal(summary.categories.find(c=>c.category==='communication').label,'communication');
+    const reasons=await scorecards.lowReasons(dataCouncil,sq({limit:200}));
+    assert.ok(reasons.rows.filter(r=>r.category==='communication').every(r=>r.label==='communication'));
+    await client.query("INSERT INTO rating_category_config(code,label,position,is_active) VALUES ('communication','Current communication label',3,false)");
+  });
+  for(const c of categoryBefore) await client.query('UPDATE rating_category_config SET is_active=$2,label=$3 WHERE code=$1',[c.code,c.is_active,c.label]);
+  await test('scorecard view/acknowledgement preserve scope and current-card freeze/eligibility', async () => {
+    const submitted=cardIds[0];
+    await rejects(()=>scorecards.view({...dataCouncil,wardCode:dataOther},submitted),403);
+    await rejects(()=>scorecards.acknowledge({...dataCouncil,wardCode:dataOther},submitted,{note:null}),403);
+    assert.equal((await scorecards.view(dataCouncil,submitted)).status,'viewed');
+    assert.equal((await scorecards.acknowledge(dataCouncil,submitted,{note:'Received'})).status,'acknowledged');
+    await rejects(()=>scorecards.acknowledge(dataCouncil,submitted,{note:null}),409);
+    const previous=(await client.query('SELECT member_id FROM users WHERE id=$1',[member.sub])).rows[0].member_id;
+    await client.query('UPDATE users SET member_id=$2 WHERE id=$1',[member.sub,cardMembers[204]]);
+    const eligibilityLeader=(await client.query("INSERT INTO leaders(member_id,ward_code,full_name,is_public) VALUES ($1,$2,'Data councillor',true) RETURNING id",
+      [memberId,dataWard])).rows[0].id;
+    await client.query(`INSERT INTO councillor_scorecards(member_id,councillor_member_id,ward_code,period_month,status)
+      VALUES ($1,$2,$3,date_trunc('month',now())::date,'acknowledged')`,[cardMembers[204],memberId,dataWard]);
+    const current=await scorecards.getCurrent(member);
+    assert.equal(current.eligible,true); assert.equal(current.frozen,true);
+    const body={shareName:false,items:current.categories.map(c=>({category:c.code,score:3}))};
+    await rejects(()=>scorecards.submit(member,body),409);
+    await rejects(()=>scorecards.submit(member,{...body,items:body.items.map((it,i)=>i?it:{...it,score:1,reason:'too short'})}),400);
+    await rejects(()=>scorecards.submit(dataCouncil,body),403);
+    assert.equal((await scorecards.getCurrent({...member,sub:randomUUID()})).reason,'no_member');
+    await client.query('UPDATE members SET ward=NULL WHERE id=$1',[cardMembers[204]]);
+    assert.equal((await scorecards.getCurrent({...member,wardCode:null})).reason,'no_ward');
+    await client.query('UPDATE members SET ward=$2 WHERE id=$1',[cardMembers[204],dataEmpty]);
+    assert.equal((await scorecards.getCurrent(member)).reason,'vacant_seat');
+    await client.query('UPDATE members SET ward=$2 WHERE id=$1',[cardMembers[204],dataWard]);
+    // Exercise self-rating through this test's leader, without sharing a member between accounts.
+    await client.query('UPDATE leaders SET member_id=$2 WHERE id=$1',[eligibilityLeader,cardMembers[204]]);
+    const self=await scorecards.getCurrent(member);
+    assert.equal(self.eligible,false); assert.equal(self.reason,'self');
+    await client.query('UPDATE leaders SET member_id=$2 WHERE id=$1',[eligibilityLeader,memberId]);
+    assert.equal((await client.query('SELECT member_id FROM users WHERE id=$1',[councilor.sub])).rows[0].member_id,memberId);
+    await client.query('UPDATE users SET member_id=$2 WHERE id=$1',[member.sub,previous]);
+  });
+
+  const bulkCases=(await client.query(`INSERT INTO service_requests(ref_no,title,ward_code,status,category,sla_due_at,created_at)
+    SELECT 'QA-DATA-'||$2||'-'||n,'Data case',$1,
+      (CASE WHEN n<=600 THEN 'reported' WHEN n<=800 THEN 'resolved' WHEN n<=900 THEN 'verified'
+        WHEN n<=1000 THEN 'closed' ELSE 'in_progress' END)::sr_status,
+      (CASE WHEN n<=600 THEN 'water' ELSE 'roads' END)::sr_category,
+      CASE WHEN n<=600 THEN now()-interval '1 day' END,'2020-01-01T00:00:00Z'
+    FROM generate_series(1,1005) n RETURNING id`,[dataWard,suffix])).rows.map(r=>r.id);
+  const addDataCase=async ({wardCode=dataWard,status='reported',visibility='members',due=null,merged=null}={}) =>
+    (await client.query(`INSERT INTO service_requests(ref_no,title,ward_code,status,visibility,sla_due_at,merged_into)
+      VALUES ($1,'Data edge case',$2,$3,$4,CASE WHEN $5::text IS NULL THEN NULL ELSE now()+$5::interval END,$6) RETURNING id`,
+      [`QA-${randomUUID()}`,wardCode,status,visibility,due,merged])).rows[0].id;
+  const privateCase=await addDataCase({status:'resolved',visibility:'private',due:'-1 day'});
+  const dueBefore=await addDataCase({due:'-1 microsecond'});
+  const dueEqual=await addDataCase({due:'0 seconds'});
+  const dueAfter=await addDataCase({due:'1 microsecond'});
+  await addDataCase({status:'duplicate',due:'-1 day'});
+  await addDataCase({merged:bulkCases[0],due:'-1 day'});
+  const otherCase=await addDataCase({wardCode:dataOther});
+  const nullPublic=await addDataCase({wardCode:null,visibility:'public'});
+  const nullPrivate=await addDataCase({wardCode:null,visibility:'private'});
+  await client.query('UPDATE service_requests SET report_count=9999 WHERE id=$1',[bulkCases[0]]);
+
+  await test('all-time case performance exceeds 1000 rows and separates raw totals and daily series', async () => {
+    const module=(await getDashboardActivity(dataCouncil,'cases')).modules.cases;
+    const perf=module.performance;
+    assert.equal(module.total,1011); assert.equal(perf.totals.total,1009);
+    assert.deepEqual(perf.totals,{total:1009,open:608,resolved:401,slaBreached:601,resolutionRatePct:39.74});
+    assert.equal(module.dailyCreated.length,30); assert.equal(module.dailyCreated.reduce((s,d)=>s+d.value,0),6);
+    assert.equal(perf.byStatus.reduce((s,r)=>s+r.value,0),1009);
+    assert.equal(perf.byCategory.reduce((s,r)=>s+r.value,0),1009);
+    assert.ok(!perf.byStatus.some(r=>r.label==='duplicate'));
+    assert.deepEqual(perf.byWard,[{wardCode:dataWard,...perf.totals}]);
+    assert.ok(Number.isFinite(Date.parse(perf.asOf)));
+    const clock=(await client.query("SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS value")).rows[0].value;
+    assert.equal(perf.asOf,clock);
+    const edge=(await client.query('SELECT id,sla_due_at < $1::timestamptz AS breached FROM service_requests WHERE id=ANY($2::uuid[])',[perf.asOf,[dueBefore,dueEqual,dueAfter]])).rows;
+    assert.equal(edge.find(r=>r.id===dueBefore).breached,true);
+    assert.equal(edge.find(r=>r.id===dueEqual).breached,false);
+    assert.equal(edge.find(r=>r.id===dueAfter).breached,false);
+  });
+  await test('case performance preserves private tiers, primary scope, empty scope and permission denial', async () => {
+    const visible=(await getDashboardActivity(dataAnalyst,'cases')).modules.cases.performance;
+    assert.equal(visible.totals.total,1008); assert.equal(visible.totals.resolved,400);
+    assert.equal(visible.totals.slaBreached,601);
+    const regional=(await getDashboardActivity(dataRegional,'cases')).modules.cases.performance;
+    assert.equal(regional.totals.total,1010); assert.equal(regional.byWard.length,2);
+    const regionalAnalyst=(await getDashboardActivity({...dataRegional,role:Role.ANALYST},'cases')).modules.cases.performance;
+    assert.equal(regionalAnalyst.totals.total,1009);
+    assert.deepEqual(regionalAnalyst.byWard.map(r=>r.wardCode).sort(),[dataWard,dataOther].sort());
+    assert.ok(!regionalAnalyst.byWard.some(r=>r.wardCode===null),'A region-scoped analyst must not receive null-ward cases');
+    assert.equal((await getDashboardActivity({...dataCouncil,permissions:[]},'cases')).modules.cases,null);
+    const empty=(await getDashboardActivity(noTerritory,'cases')).modules.cases.performance;
+    assert.deepEqual(empty.totals,zeroMetrics); assert.deepEqual(empty.byWard,[]);
+    assert.deepEqual(empty.byStatus,[]); assert.deepEqual(empty.byCategory,[]);
+    const national=(await getDashboardActivity(admin,'cases')).modules.cases.performance;
+    const nullBucket=national.byWard.find(r=>r.wardCode===null);
+    const expected=(await client.query("SELECT count(*)::int AS n FROM service_requests WHERE ward_code IS NULL AND merged_into IS NULL AND status<>'duplicate'")).rows[0].n;
+    assert.ok(nullBucket,'National staff must retain the permitted null-ward bucket');
+    assert.equal(nullBucket.total,expected); assert.ok(nullBucket.total>=2);
+    // Unlike national admins, analysts are national only without ward or region assignments.
+    const nationalAnalyst=(await getDashboardActivity({...admin,role:Role.ANALYST,wardCode:null,regionCodes:[]},'cases')).modules.cases.performance;
+    const publicExpected=(await client.query("SELECT count(*)::int AS n FROM service_requests WHERE ward_code IS NULL AND visibility<>'private' AND merged_into IS NULL AND status<>'duplicate'")).rows[0].n;
+    const publicNullBucket=nationalAnalyst.byWard.find(r=>r.wardCode===null);
+    assert.ok(publicNullBucket,'An unscoped analyst must retain the nonprivate null-ward bucket');
+    assert.equal(publicNullBucket.total,publicExpected); assert.ok(publicNullBucket.total>=1);
+    assert.ok(publicNullBucket.total<nullBucket.total,'The national analyst must not see private null-ward cases');
+    assert.equal((await getDashboardActivity(dataCouncil,'reports')).modules.reports.total,0);
+  });
+
+  const disabledWard=`QA-${suffix}-D4`;
+  await client.query("INSERT INTO regions(code,name,level,parent_code) VALUES ($1,'Disabled candidate ward','ward',$2)",[disabledWard,dataRegion]);
+  const displayUser=randomUUID(); const disabledUser=randomUUID(); const extraUser=randomUUID();
+  for(const [id,code,active,codes] of [[displayUser,dataWard,true,[dataWard,dataOther]],[disabledUser,disabledWard,false,[]],[extraUser,dataWard,false,[dataWard]]]) {
+    await client.query("INSERT INTO users(id,password_hash,role,ward_code,ward_codes,is_active) VALUES ($1,'not-a-login-hash','ward_councillor',$2,$3,$4)",[id,code,codes,active]);
+  }
+  await client.query(`INSERT INTO leaders(user_id,ward_code,ward_codes,full_name,is_public) VALUES
+    ($1,$3,ARRAY[$3,$4],'Public display councillor',true),($2,$5,ARRAY[$5],'Disabled display',true)`,[displayUser,disabledUser,dataWard,dataOther,disabledWard]);
+  await client.query(`INSERT INTO members(ward,status,tier)
+    SELECT $1,s,t FROM unnest(enum_range(NULL::member_status)) s CROSS JOIN unnest(enum_range(NULL::member_tier)) t`,[dataWard]);
+  await client.query("INSERT INTO members(ward,status,tier,deleted_at) VALUES ($1,'active','staff',now()),(NULL,'active','staff',NULL),($2,'active','staff',NULL)",[dataWard,`QA-${suffix}-unknown`]);
+
+  await test('ward summary includes authorized zero wards, all nondeleted members and no join multiplication', async () => {
+    const view=await getWardSummary(dataRegional);
+    assert.equal(view.total,4); assert.equal(view.wardFilter,null);
+    assert.deepEqual(view.rows.map(r=>r.code),[dataWard,dataOther,dataEmpty,disabledWard].sort());
+    const one=view.rows.find(r=>r.code===dataWard);
+    assert.equal(one.members,235); assert.equal(one.candidateRecorded,true);
+    assert.deepEqual(one.councillor,{fullName:'Public display councillor'});
+    assert.deepEqual(one.cases,(await getDashboardActivity(dataCouncil,'cases')).modules.cases.performance.totals);
+    const empty=view.rows.find(r=>r.code===dataEmpty);
+    assert.equal(empty.members,0); assert.equal(empty.candidateRecorded,false); assert.equal(empty.councillor,null);
+    assert.deepEqual(empty.cases,zeroMetrics);
+    const disabled=view.rows.find(r=>r.code===disabledWard);
+    assert.equal(disabled.candidateRecorded,true); assert.equal(disabled.councillor,null);
+    const secondary=view.rows.find(r=>r.code===dataOther);
+    assert.equal(secondary.candidateRecorded,true); assert.deepEqual(secondary.councillor,{fullName:'Public display councillor'});
+    assert.equal(view.rows.reduce((s,r)=>s+r.members,0),235);
+    assert.equal(view.rows.reduce((s,r)=>s+r.cases.total,0),1010);
+    assert.ok(!JSON.stringify(view).includes('password')); assert.ok(!JSON.stringify(view).includes('contactPublic'));
+    assert.equal((await getWardSummary(dataCouncil)).rows.length,1);
+    const filtered=await getWardSummary(dataRegional,{ward:` ${dataWard} `});
+    assert.equal(filtered.wardFilter,dataWard); assert.equal(filtered.total,1);
+  });
+  await test('ward summary rejects invalid/outside wards and never substitutes zero for missing case rights', async () => {
+    for(const value of ['', ' ', 'x'.repeat(33), ['x']]) assert.equal(wardSummaryQuery.safeParse({ward:value}).success,false);
+    await rejects(()=>getWardSummary(dataCouncil,{ward:region}),400);
+    await rejects(()=>getWardSummary(dataCouncil,{ward:'not-a-ward'}),400);
+    await rejects(()=>getWardSummary(dataCouncil,{ward:dataOther}),403);
+    await rejects(()=>getWardSummary(noTerritory,{ward:dataWard}),403);
+    assert.equal((await getWardSummary(noTerritory)).total,0);
+    assert.deepEqual((await getWardSummary(noTerritory)).rows,[]);
+    await rejects(()=>getWardSummary({...dataCouncil,permissions:[Permission.MEMBER_READ]}),403);
+    await rejects(()=>getWardSummary({...dataCouncil,permissions:[Permission.OVERVIEW_READ]}),403);
+    const permitted={...dataCouncil,permissions:[Permission.OVERVIEW_READ,Permission.MEMBER_READ]};
+    assert.equal((await getWardSummary(permitted)).rows[0].cases,null);
+    assert.equal((await getWardSummary(dataAnalyst)).rows[0].cases.total,1008);
+  });
+
+  await test('every remaining valid service-request state is open, never a resolved or duplicate state', async () => {
+    await client.query('SAVEPOINT all_case_states');
+    try {
+      const states=(await client.query('SELECT unnest(enum_range(NULL::sr_status))::text AS status')).rows.map(r=>r.status);
+      for(const status of states) await addDataCase({wardCode:dataEmpty,status,due:'-1 second'});
+      const metrics=(await getWardSummary(dataRegional,{ward:dataEmpty})).rows[0].cases;
+      const total=states.filter(s=>s!=='duplicate').length;
+      assert.equal(metrics.total,total); assert.equal(metrics.resolved,3);
+      assert.equal(metrics.open,total-3); assert.equal(metrics.slaBreached,total-3);
+    } finally {
+      await client.query('ROLLBACK TO SAVEPOINT all_case_states');
+      await client.query('RELEASE SAVEPOINT all_case_states');
+    }
+  });
+
+  const legacyFilter={limit:100,offset:0};
+  await client.query(`INSERT INTO ratings(target_type,target_id,member_id,rating,reason)
+    SELECT 'service_request',$1,id,4,'Legacy regression rating' FROM unnest($2::uuid[]) x(id)`,[bulkCases[0],cardMembers.slice(0,105)]);
+  for(const target of [privateCase,otherCase,nullPublic,nullPrivate]) await client.query(
+    "INSERT INTO ratings(target_type,target_id,member_id,rating,reason) VALUES ('service_request',$1,$2,2,'Legacy low reason')",[target,cardMembers[0]]);
+  await client.query(`INSERT INTO verifications(service_request_id,member_id,verdict,note)
+    SELECT $1,id,(CASE WHEN n%3=0 THEN 'fixed' WHEN n%3=1 THEN 'not_fixed' ELSE 'partial' END)::verification_verdict,'Legacy verification note'
+    FROM unnest($2::uuid[]) WITH ORDINALITY x(id,n)`,[bulkCases[0],cardMembers.slice(0,105)]);
+  for(const target of [privateCase,otherCase,nullPublic,nullPrivate]) await client.query(
+    "INSERT INTO verifications(service_request_id,member_id,verdict,note) VALUES ($1,$2,'partial','Edge verification')",[target,cardMembers[0]]);
+
+  await test('legacy lists enforce max100 and return complete scoped totals and actual typed fields', async () => {
+    assert.equal(listRatingsQuery.safeParse({limit:200}).success,false);
+    assert.equal(listVerificationsQuery.safeParse({limit:200}).success,false);
+    for(const read of [listRatings,listVerifications]) {
+      const first=await read(legacyFilter,dataCouncil);
+      const rest=await read({...legacyFilter,offset:100},dataCouncil);
+      assert.equal(first.total,106); assert.equal(first.items.length,100); assert.equal(rest.total,106); assert.equal(rest.items.length,6);
+      assert.equal(new Set([...first.items,...rest.items].map(r=>r.id)).size,106);
+      assert.deepEqual((await read(legacyFilter,dataCouncil)).items,first.items);
+      const empty=await read({...legacyFilter,offset:999},dataCouncil); assert.equal(empty.total,106); assert.deepEqual(empty.items,[]);
+      assert.equal((await read(legacyFilter,noTerritory)).total,0);
+      assert.equal((await read(legacyFilter,dataRegional)).total,107);
+      assert.equal((await read(legacyFilter,dataAnalyst)).total,105);
+      await rejects(()=>read(legacyFilter,{...dataCouncil,permissions:[]}),403);
+      await rejects(()=>read(legacyFilter,undefined),403);
+    }
+    const ratings=await listRatings({...legacyFilter,targetType:'service_request',targetId:bulkCases[0]},dataCouncil);
+    assert.equal(ratings.total,105); assert.ok(ratings.items.every(r=>r.rating===4&&!('score' in r)));
+    const verifications=await listVerifications({...legacyFilter,serviceRequestId:bulkCases[0]},dataCouncil);
+    assert.equal(verifications.total,105);
+    assert.ok(verifications.items.every(r=>['fixed','not_fixed','partial'].includes(r.verdict)&&r.memberId&&r.note&&!('result' in r)&&!('verifierMemberId' in r)));
+    assert.equal((await listRatings({...legacyFilter,targetId:otherCase},dataCouncil)).total,0);
+    assert.equal((await listVerifications({...legacyFilter,serviceRequestId:otherCase},dataCouncil)).total,0);
+    assert.equal((await getAverageRating('service_request',privateCase)).count,1,'public aggregation contract is unchanged');
+  });
+  await test('legacy rating target scope fails closed for orphan, unpublished and secondary leader targets', async () => {
+    const orphan=randomUUID(); const project=randomUUID(); const hiddenLeaderMember=randomUUID();
+    const patrol=randomUUID();
+    await client.query("INSERT INTO patrols(id,councillor_member_id,ward_code,visibility) VALUES ($1,$2,$3,'private')",[patrol,memberId,dataWard]);
+    await client.query("INSERT INTO projects(id,title,ward_code,is_published) VALUES ($1,'Private project',$2,false)",[project,dataWard]);
+    await client.query("INSERT INTO members(id,ward,status,tier) VALUES ($1,$2,'active','candidate')",[hiddenLeaderMember,dataOther]);
+    await client.query("INSERT INTO leaders(member_id,ward_code,ward_codes,full_name,is_public) VALUES ($1,$2,ARRAY[$3],'Secondary-only target',true)",[hiddenLeaderMember,dataOther,dataWard]);
+    for(const [type,id] of [['service_request',orphan],['project',project],['councillor',hiddenLeaderMember],['patrol',patrol]]) {
+      await client.query('INSERT INTO ratings(target_type,target_id,member_id,rating) VALUES ($1,$2,$3,5)',[type,id,cardMembers[0]]);
+    }
+    assert.equal((await listRatings({...legacyFilter,targetId:orphan},admin)).total,0);
+    assert.equal((await listRatings({...legacyFilter,targetId:project},dataCouncil)).total,1);
+    assert.equal((await listRatings({...legacyFilter,targetId:project},dataAnalyst)).total,0);
+    assert.equal((await listRatings({...legacyFilter,targetId:hiddenLeaderMember},dataCouncil)).total,0);
+    assert.equal((await listRatings({...legacyFilter,targetId:hiddenLeaderMember},dataRegional)).total,1);
+    assert.equal((await listRatings({...legacyFilter,targetId:patrol},dataCouncil)).total,1);
+    assert.equal((await listRatings({...legacyFilter,targetId:patrol},dataAnalyst)).total,0);
+  });
+
   const app = createApp();
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
+    await test('live-data HTTP contracts enforce authentication, effective permissions and safe errors', async () => {
+      const paths=['/api/scorecards/inbox','/api/scorecards/summary','/api/scorecards/low-reasons','/api/crm/wards/summary','/api/ratings','/api/verifications'];
+      for(const path of paths) assert.equal((await fetch(`${base}${path}`)).status,401);
+      const headers={Authorization:`Bearer ${signAccessToken(councilor)}`};
+      const old=(await client.query('SELECT ward_code,ward_codes FROM users WHERE id=$1',[councilor.sub])).rows[0];
+      await client.query('UPDATE users SET ward_code=$2,ward_codes=$3 WHERE id=$1',[councilor.sub,dataWard,[dataWard,dataOther]]);
+      for(const path of paths) {
+        const response=await fetch(`${base}${path}`,{headers}); assert.equal(response.status,200,path);
+        assert.match(response.headers.get('cache-control')??'',/no-store/);
+      }
+      const legacy=await (await fetch(`${base}/api/ratings?limit=100&targetId=${bulkCases[0]}`,{headers})).json();
+      assert.equal(legacy.total,105); assert.equal(legacy.items[0].rating,4);
+      const dashboard=await (await fetch(`${base}/api/crm/dashboard`,{headers})).json();
+      assert.equal(dashboard.activity.modules.cases.performance.totals.total,1009);
+      for(const [path,status] of [
+        ['/api/scorecards/summary?period=2024-13',400],['/api/scorecards/inbox?ward=%20',400],
+        ['/api/scorecards/low-reasons?offset=-1',400],[`/api/scorecards/inbox?ward=${dataOther}`,403],
+        ['/api/crm/wards/summary?ward=missing',400],[`/api/crm/wards/summary?ward=${dataOther}`,403],
+        ['/api/ratings?limit=200',400],['/api/verifications?limit=200',400]]) {
+        const response=await fetch(`${base}${path}`,{headers}); assert.equal(response.status,status,path);
+        const body=await response.json(); assert.ok(body.error.code&&body.error.message&&body.error.reqId);
+        assert.ok(!('details' in body.error));
+      }
+      for(const [permission,path] of [[Permission.RATING_SCORECARD_READ,'/api/scorecards/summary'],
+        [Permission.RATING_SCORECARD_READ,'/api/scorecards/inbox'],[Permission.RATING_SCORECARD_READ,'/api/scorecards/low-reasons'],
+        [Permission.MEMBER_READ,'/api/crm/wards/summary'],[Permission.OVERVIEW_READ,'/api/ratings'],
+        [Permission.OVERVIEW_READ,'/api/crm/wards/summary'],[Permission.CASE_READ,'/api/verifications']]) {
+        await client.query('UPDATE users SET permission_revokes=$2 WHERE id=$1',[councilor.sub,[permission]]);
+        assert.equal((await fetch(`${base}${path}`,{headers})).status,403);
+      }
+      const noCases=await (await fetch(`${base}/api/crm/dashboard`,{headers})).json();
+      assert.equal(noCases.activity.modules.cases,null);
+      const noWardCases=await (await fetch(`${base}/api/crm/wards/summary`,{headers})).json();
+      assert.ok(noWardCases.rows.every(r=>r.cases===null));
+      await client.query('UPDATE users SET permission_revokes=$2,ward_code=$3,ward_codes=$4 WHERE id=$1',[councilor.sub,[],old.ward_code,old.ward_codes]);
+    });
     await test('patrol stats route uses authentication and patrol read permission', async () => {
       assert.equal((await fetch(`${base}/api/patrols/stats`)).status, 401);
       const response = await fetch(`${base}/api/patrols/stats`, { headers: { Authorization: `Bearer ${signAccessToken(councilor)}` } });

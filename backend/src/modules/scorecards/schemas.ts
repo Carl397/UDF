@@ -63,10 +63,11 @@ export type AcknowledgeBody = z.infer<typeof acknowledgeBody>;
  * only ever reaches their own ward.
  */
 export const rollupQuery = z.object({
-  period: z.string().trim().regex(/^\d{4}-\d{2}$/, 'period must be YYYY-MM').optional(),
-  ward: z.string().trim().max(32).optional(),
+  period: z.string().trim().regex(/^(?!0000)\d{4}-(0[1-9]|1[0-2])$/, 'period must be a real YYYY-MM').optional(),
+  ward: z.string().trim().min(1).max(32).optional(),
   status: z.enum(['submitted', 'viewed', 'acknowledged']).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 export type RollupQuery = z.infer<typeof rollupQuery>;
 

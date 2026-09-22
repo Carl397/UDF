@@ -1,162 +1,76 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api } from '../../../lib/api';
-import type { ServiceRequest } from '../../../types';
-import {
-  CrmPageHeader, CrmStatGrid, CrmTable, CrmCard, CrmBadge,
-  CrmSmallButton, downloadCsv,
-} from '../../../components/crm/ui';
-
-/**
- * CRM Analytics — cross-ward performance intelligence. Aggregates service
- * requests into status/category distributions and a per-ward scorecard
- * (volume, resolution rate, SLA health) for leadership review.
- */
-
-interface WardScore {
-  ward: string;
-  total: number;
-  open: number;
-  resolved: number;
-  breach: number;
-  resolutionRate: number;
-}
+import { api, dataReadError } from '../../../lib/api';
+import type { CrmDashboard } from '../../../types';
+import { CrmPageHeader, CrmStatGrid, CrmTable, CrmCard, CrmSmallButton, downloadCsv } from '../../../components/crm/ui';
 
 function BarChart({ data, color = '#c8102e' }: { data: { label: string; value: number }[]; color?: string }) {
   const max = Math.max(1, ...data.map((d) => d.value));
-  return (
-    <div>
-      {data.map((d) => (
-        <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <span style={{ width: 130, fontSize: 13, color: '#374151', textTransform: 'capitalize' }}>{d.label.replace(/_/g, ' ')}</span>
-          <span style={{ flex: 1, height: 18, background: '#f1f1f1', borderRadius: 4, overflow: 'hidden' }}>
-            <span style={{ display: 'block', width: `${(d.value / max) * 100}%`, height: 18, background: color, borderRadius: 4 }} />
-          </span>
-          <span style={{ width: 40, textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{d.value}</span>
-        </div>
-      ))}
-    </div>
-  );
+  return <div>{data.map((d) => <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+    <span style={{ width: 130, fontSize: 13, textTransform: 'capitalize' }}>{d.label.replace(/_/g, ' ')}</span>
+    <span aria-hidden="true" style={{ flex: 1, height: 18, background: '#f1f1f1', borderRadius: 4, overflow: 'hidden' }}>
+      <span style={{ display: 'block', width: `${(d.value / max) * 100}%`, height: 18, background: color }} />
+    </span>
+    <span style={{ minWidth: 40, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{d.value}</span>
+  </div>)}</div>;
 }
 
 export default function CrmAnalytics() {
-  const [cases, setCases] = useState<ServiceRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ activeMembers: 0, openCases: 0, openPetitions: 0, openParticipations: 0 });
-
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ attempt: number; data: CrmDashboard | null; error: string | null }>({ attempt: -1, data: null, error: null });
   useEffect(() => {
-    Promise.all([
-      api.crmEngagements({ limit: '1000' }).catch(() => ({ items: [] as ServiceRequest[] })),
-      api.crmDashboard().catch(() => ({ activeMembers: 0, openCases: 0, openPetitions: 0, openParticipations: 0 })),
-    ])
-      .then(([eng, dash]) => {
-        setCases((eng.items ?? []) as ServiceRequest[]);
-        setStats(dash);
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const countBy = (key: keyof ServiceRequest) => {
-    const map = new Map<string, number>();
-    cases.forEach((c) => {
-      const k = String(c[key] ?? 'unknown');
-      map.set(k, (map.get(k) ?? 0) + 1);
+    let active = true;
+    api.crmDashboard().then((data) => {
+      if (active) setState({ attempt, data, error: null });
+    }).catch((error: unknown) => {
+      if (active) setState({ attempt, data: null, error: dataReadError(error) });
     });
-    return [...map.entries()]
-      .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value);
-  };
+    return () => { active = false; };
+  }, [attempt]);
+  const data = state.attempt === attempt ? state.data : null;
+  const error = state.attempt === attempt ? state.error : null;
+  const loading = !data && !error;
+  const cases = data?.activity.modules.cases;
+  const performance = cases?.performance;
 
-  const byStatus = countBy('status');
-  const byCategory = countBy('category');
-
-  const wardScores: WardScore[] = (() => {
-    const map = new Map<string, WardScore>();
-    cases.forEach((c) => {
-      const ward = c.wardCode ?? 'Unassigned';
-      if (!map.has(ward)) map.set(ward, { ward, total: 0, open: 0, resolved: 0, breach: 0, resolutionRate: 0 });
-      const s = map.get(ward)!;
-      s.total++;
-      if (['resolved', 'verified', 'closed'].includes(c.status)) s.resolved++;
-      else s.open++;
-      if (c.slaDueAt && new Date(c.slaDueAt) < new Date() && !['resolved', 'verified', 'closed'].includes(c.status)) s.breach++;
-    });
-    return [...map.values()]
-      .map((s) => ({ ...s, resolutionRate: s.total ? Math.round((s.resolved / s.total) * 100) : 0 }))
-      .sort((a, b) => b.total - a.total);
-  })();
-
-  const resolvedTotal = cases.filter((c) => ['resolved', 'verified', 'closed'].includes(c.status)).length;
-  const overallRate = cases.length ? Math.round((resolvedTotal / cases.length) * 100) : 0;
-
-  if (loading) {
-    return (
-      <div>
-        <CrmPageHeader title="Analytics" subtitle="Cross-ward performance intelligence." />
-        <p style={{ color: '#64748b' }}>Crunching numbers…</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <CrmPageHeader
-        title="Analytics"
-        subtitle="Cross-ward performance intelligence and service-delivery scorecards."
-        actions={
-          <CrmSmallButton
-            onClick={() =>
-              downloadCsv(
-                'ward-scorecards',
-                ['Ward', 'Total Cases', 'Open', 'Resolved', 'SLA Breaches', 'Resolution Rate %'],
-                wardScores.map((w) => [w.ward, w.total, w.open, w.resolved, w.breach, w.resolutionRate]),
-              )
-            }
-          >
-            Export Scorecards
-          </CrmSmallButton>
-        }
-      />
-
-      <CrmStatGrid
-        stats={[
-          { label: 'Active Members', value: stats.activeMembers.toLocaleString() },
-          { label: 'Total Cases', value: cases.length.toLocaleString() },
-          { label: 'Resolution Rate', value: `${overallRate}%`, tone: overallRate >= 60 ? 'success' : overallRate >= 30 ? 'warn' : 'danger' },
-          { label: 'Open Petitions', value: stats.openPetitions },
-          { label: 'Live Participations', value: stats.openParticipations },
-        ]}
-      />
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 20 }}>
-        <CrmCard title="Cases by Status">
-          <BarChart data={byStatus} />
+  return <div>
+    <CrmPageHeader title="Analytics" subtitle="All-time service-case performance across your authorized territory. Not resident-report counts or private monthly councillor scores."
+      actions={<CrmSmallButton disabled={!performance} onClick={() => performance && downloadCsv('all-time-case-performance-by-ward',
+        ['Ward', 'Total cases', 'Open', 'Resolved', 'SLA breached', 'Resolution rate %'],
+        performance.byWard.map((w) => [w.wardCode ?? 'No ward assigned', w.total, w.open, w.resolved, w.slaBreached, w.resolutionRatePct ?? 'No cases']))}>Export case performance</CrmSmallButton>} />
+    <CrmSmallButton disabled={loading} onClick={() => setAttempt((n) => n + 1)}>{error ? 'Retry' : 'Refresh'}</CrmSmallButton>
+    {loading ? <p role="status">Loading case analytics…</p> : error ? <p role="alert">{error}</p> : data && <>
+      {cases === null ? <CrmCard title="Case performance unavailable">
+        <p role="status">Your account does not have access to case data. No case counts or rates are shown.</p>
+        <p style={{ fontSize: 12 }}>Last successful fetch · dashboard generated at <time dateTime={data.activity.asOf}>{data.activity.asOf}</time></p>
+      </CrmCard> : performance && <>
+        <p style={{ fontSize: 12 }}>Last successful fetch · database as of <time dateTime={performance.asOf}>{performance.asOf}</time></p>
+        <CrmStatGrid stats={[
+          { label: 'Eligible cases · all-time', value: performance.totals.total },
+          { label: 'Open · all-time', value: performance.totals.open },
+          { label: 'Resolved · all-time', value: performance.totals.resolved },
+          { label: 'Open past SLA deadline', value: performance.totals.slaBreached },
+          { label: 'Resolution rate · all-time', value: performance.totals.resolutionRatePct === null ? 'No cases' : `${performance.totals.resolutionRatePct}%` },
+        ]} />
+        <p style={{ fontSize: 13 }}>Actual service requests only; duplicates and merged records excluded. Resolved includes resolved, verified and closed.
+          SLA breaches are open cases past a recorded deadline at the database snapshot. Empty sets have no resolution rate.</p>
+        {performance.totals.total === 0 && <p>No eligible service cases in your authorized scope.</p>}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 20 }}>
+          <CrmCard title="Cases by status · all-time"><BarChart data={performance.byStatus} /></CrmCard>
+          <CrmCard title="Cases by category · all-time"><BarChart data={performance.byCategory} color="#0369a1" /></CrmCard>
+        </div>
+        <CrmCard title="Case performance by ward · all-time">
+          <CrmTable columns={['Ward', 'Total', 'Open', 'Resolved', 'SLA breached', 'Resolution rate']}
+            rows={performance.byWard.map((w) => [w.wardCode ?? 'No ward assigned', w.total, w.open, w.resolved,
+              w.slaBreached, w.resolutionRatePct === null ? 'No cases' : `${w.resolutionRatePct}%`,
+            ])} empty="No eligible cases to group by ward." />
         </CrmCard>
-        <CrmCard title="Cases by Category">
-          <BarChart data={byCategory} color="#0369a1" />
+        <CrmCard title={`Case creation activity · last ${data.activity.periodDays} days`}>
+          <p style={{ fontSize: 12 }}>Existing daily creation series, including records later marked duplicate or merged. This is not the all-time performance denominator.</p>
+          <BarChart data={cases!.dailyCreated} color="#57534e" />
         </CrmCard>
-      </div>
-
-      <CrmCard title="Ward Scorecards">
-        <CrmTable
-          columns={['Ward', 'Total', 'Open', 'Resolved', 'SLA Breach', 'Resolution Rate']}
-          rows={wardScores.map((w) => [
-            <strong key="w">{w.ward}</strong>,
-            w.total,
-            <span key="o" style={{ color: w.open > 0 ? '#92400e' : '#64748b' }}>{w.open}</span>,
-            <span key="r" style={{ color: '#166534' }}>{w.resolved}</span>,
-            w.breach > 0 ? <CrmBadge key="b" value="sla_breach" /> : <span style={{ color: '#94a3b8' }}>0</span>,
-            <span key="rr" style={{ fontSize: 13 }}>
-              {w.resolutionRate}%
-              <span style={{ display: 'block', width: 100, height: 6, background: '#eee', borderRadius: 3, marginTop: 4 }}>
-                <span style={{ display: 'block', width: `${w.resolutionRate}%`, height: 6, background: w.resolutionRate >= 60 ? '#16a34a' : w.resolutionRate >= 30 ? '#d97706' : '#c8102e', borderRadius: 3 }} />
-              </span>
-            </span>,
-          ])}
-          empty="No case data to score yet."
-        />
-      </CrmCard>
-    </div>
-  );
+      </>}
+    </>}
+  </div>;
 }

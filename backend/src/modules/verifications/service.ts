@@ -1,15 +1,16 @@
-import { query } from '../../db/pool.js';
+import { query, withReadSnapshot } from '../../db/pool.js';
 import { ApiError } from '../../http/errors.js';
 import { recordAudit } from '../../security/audit.js';
-import type { Principal } from '../../auth/permissions.js';
+import { Permission, type Principal } from '../../auth/permissions.js';
+import { wardCodeScope, privateTierClause } from '../../auth/scope.js';
 import type { z } from 'zod';
-import type { createVerificationSchema } from './schemas.js';
+import { listVerificationsQuery, type createVerificationSchema } from './schemas.js';
 
 export interface Verification {
   id: string;
   serviceRequestId: string;
   memberId: string;
-  verdict: string;
+  verdict: 'fixed' | 'not_fixed' | 'partial';
   note: string | null;
   photoId: string | null;
   createdAt: Date;
@@ -79,28 +80,26 @@ export async function createVerification(
   return verification;
 }
 
-export async function listVerifications(filters: {
+export async function listVerifications(input: {
   serviceRequestId?: string;
   limit: number;
   offset: number;
-}): Promise<{ items: Verification[]; total: number }> {
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let idx = 1;
-
-  if (filters.serviceRequestId) { conditions.push(`service_request_id = $${idx++}`); values.push(filters.serviceRequestId); }
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  const [itemsRes, countRes] = await Promise.all([
-    query<Verification>(
-      `SELECT id, service_request_id AS "serviceRequestId", member_id AS "memberId",
-              verdict, note, photo_id AS "photoId", created_at AS "createdAt"
-       FROM verifications ${where}
-       ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx}`,
-      [...values, filters.limit, filters.offset],
-    ),
-    query<{ total: string }>(`SELECT COUNT(*) AS total FROM verifications ${where}`, values),
-  ]);
-
-  return { items: itemsRes.rows, total: parseInt(countRes.rows[0]?.total ?? '0', 10) };
+}, principal: Principal): Promise<{ items: Verification[]; total: number }> {
+  if (!principal?.permissions?.includes(Permission.CASE_READ)) throw ApiError.forbidden();
+  const filters = listVerificationsQuery.parse(input);
+  const scope = await wardCodeScope(principal, 's.ward_code', 1);
+  const values = [...scope.params];
+  let idx = scope.nextIndex;
+  let where = `WHERE TRUE${scope.sql}${privateTierClause(principal, 's.visibility')}`;
+  if (filters.serviceRequestId) { where += ` AND v.service_request_id = $${idx++}`; values.push(filters.serviceRequestId); }
+  const from = `FROM verifications v JOIN service_requests s ON s.id = v.service_request_id ${where}`;
+  return withReadSnapshot(async (run) => {
+    const count = await run<{ total: number }>(`SELECT count(*)::int AS total ${from}`, values);
+    const items = await run<Verification>(
+      `SELECT v.id, v.service_request_id AS "serviceRequestId", v.member_id AS "memberId",
+         v.verdict, v.note, v.photo_id AS "photoId", v.created_at AS "createdAt"
+       ${from} ORDER BY v.created_at DESC, v.id LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, filters.limit, filters.offset]);
+    return { items: items.rows, total: count.rows[0]!.total };
+  });
 }

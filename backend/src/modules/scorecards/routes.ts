@@ -27,6 +27,10 @@ import * as svc from './service.js';
 export const scorecardsRouter = Router();
 
 scorecardsRouter.use(authenticate);
+scorecardsRouter.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // ── Member write surface ───────────────────────────────────────────────────
 

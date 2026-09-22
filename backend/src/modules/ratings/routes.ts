@@ -16,7 +16,8 @@ ratingsRouter.get(
     try {
       const parsed = listRatingsQuery.safeParse(req.query);
       if (!parsed.success) throw parsed.error;
-      const result = await svc.listRatings(parsed.data);
+      const result = await svc.listRatings(parsed.data, req.principal!);
+      res.setHeader('Cache-Control', 'no-store');
       res.json(result);
     } catch (err) { next(err); }
   },

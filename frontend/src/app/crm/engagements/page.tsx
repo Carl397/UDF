@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { api } from '../../../lib/api';
+import { api, dataReadError } from '../../../lib/api';
 import type { ServiceRequest } from '../../../types';
 import {
   CrmPageHeader, CrmTable, CrmBadge, CrmFilters, CrmPagination, CrmModal, CrmField,
@@ -36,8 +36,11 @@ export default function CrmEngagements() {
 function CrmEngagementsInner() {
   const searchParams = useSearchParams();
   const [cases, setCases] = useState<ServiceRequest[]>([]);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [loadedKey, setLoadedKey] = useState('');
   // Seeded from the URL so the top-bar search can land here already filtered
   // (D9): a result row deep-links as `?search=<ref no>`, which pins that case.
   const [filter, setFilter] = useState({
@@ -68,20 +71,22 @@ function CrmEngagementsInner() {
     return p;
   }, [filter, page]);
 
+  const requestKey = JSON.stringify([params, attempt]);
+  const current = loadedKey === requestKey;
+  const ready = current && !loading && !error && total !== null;
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    api
-      .crmEngagements(params)
-      .then((r: { items: ServiceRequest[]; total: number }) => {
-        setCases(r.items);
-        setTotal(r.total);
-      })
-      .catch(() => {
-        setCases([]);
-        setTotal(0);
-      })
-      .finally(() => setLoading(false));
-  }, [params]);
+    setError(null);
+    api.crmEngagements(params).then((r) => {
+      if (!active) return;
+      setCases(r.items); setTotal(r.total); setLoadedKey(requestKey);
+    }).catch((e: unknown) => {
+      if (!active) return;
+      setError(dataReadError(e)); setLoadedKey(requestKey);
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [params, requestKey]);
 
   /**
    * Keep following the URL after mount. `useState` seeds once, so arriving here
@@ -104,8 +109,7 @@ function CrmEngagementsInner() {
       }
       setDetail(null);
       // refresh
-      const r = await api.crmEngagements(params);
-      setCases(r.items);
+      setAttempt((n) => n + 1);
     } catch {
       alert('Status transition failed.');
     }
@@ -118,7 +122,7 @@ function CrmEngagementsInner() {
    * the server's own count of this filter, so it is the exact bound to fetch.
    */
   const exportCsv = async () => {
-    if (exporting) return;
+    if (exporting || !ready || total === null) return;
     setExporting(true);
     try {
       const all = await api.crmEngagements({
@@ -144,10 +148,10 @@ function CrmEngagementsInner() {
         title="Cases"
         subtitle="Service delivery case register — full lifecycle management."
         actions={
-          <CrmSmallButton onClick={exportCsv} disabled={exporting}>
+          <CrmSmallButton onClick={exportCsv} disabled={exporting || !ready}>
             {exporting
               ? `Exporting ${total}…`
-              : total > 0
+              : ready && total !== null && total > 0
                 ? `Export CSV (${total})`
                 : 'Export CSV'}
           </CrmSmallButton>
@@ -181,8 +185,10 @@ function CrmEngagementsInner() {
         />
       </CrmFilters>
 
-      {loading ? (
-        <p style={{ color: '#64748b' }}>Loading cases…</p>
+      {!current || loading ? (
+        <p style={{ color: '#64748b' }} role="status">Loading cases…</p>
+      ) : error ? (
+        <div role="alert"><p>{error}</p><CrmSmallButton onClick={() => setAttempt((n) => n + 1)}>Retry</CrmSmallButton></div>
       ) : (
         <CrmTable
           columns={['Ref No', 'Title', 'Ward', 'Category', 'Severity', 'Status', 'Created', '']}
@@ -200,7 +206,7 @@ function CrmEngagementsInner() {
         />
       )}
 
-      <CrmPagination page={page} totalPages={Math.ceil(total / LIMIT)} total={total} onPage={setPage} />
+      {ready && total !== null && <CrmPagination page={page} totalPages={Math.ceil(total / LIMIT)} total={total} onPage={setPage} />}
 
       {detail && (
         <CrmModal title={`Case ${detail.refNo ?? ''}`} onClose={() => setDetail(null)} wide>

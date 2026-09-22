@@ -13,6 +13,10 @@ import type {
   CardDesignView,
   CardPhoto,
   CaseStats,
+  CrmDashboard,
+  WardSummary,
+  ScorecardFilters,
+  ScorecardPageFilters,
   ConfirmResult,
   EventAttendee,
   CreateJobOpportunityInput,
@@ -292,6 +296,17 @@ export class ApiClientError extends Error {
   }
 }
 
+/** A read failure is never a successful empty result; only sanitized copy travels. */
+export function dataReadError(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    if (error.status === 403) return 'Access denied. This data is not available to your account.';
+    if (error.status === 401) return 'Session expired. Please sign in again, then retry.';
+    if (error.code === 'invalid_response') return 'Data unavailable. The server returned an incompatible response. Please retry later.';
+    return `Data unavailable. ${error.message}`;
+  }
+  return 'Data unavailable. Please try again.';
+}
+
 function transportError(error: unknown, signal?: AbortSignal | null): ApiClientError {
   return new ApiClientError(0, signal?.aborted || (error instanceof Error && error.name === 'AbortError')
     ? 'request_cancelled' : 'network_error');
@@ -313,6 +328,147 @@ function validateWardStatus(value: WardChangeStatus): void {
       value.maxChanges !== 3 || !Number.isInteger(value.changesUsed) || value.changesUsed < 0 ||
       value.changesRemaining !== Math.max(0, value.maxChanges - value.changesUsed)) {
     throw new ApiClientError(200, 'invalid_response');
+  }
+}
+
+// Required display contracts are checked before a successful read reaches the UI.
+function dtoCheck(valid: unknown): asserts valid {
+  if (!valid) throw new ApiClientError(200, 'invalid_response');
+}
+function dtoRecord(value: unknown): Record<string, unknown> {
+  dtoCheck(value !== null && typeof value === 'object' && !Array.isArray(value));
+  return value as Record<string, unknown>;
+}
+function dtoArray(value: unknown): unknown[] { dtoCheck(Array.isArray(value)); return value; }
+const dtoText = (v: unknown): v is string => typeof v === 'string';
+const dtoNullableText = (v: unknown) => v === null || dtoText(v);
+const dtoCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const dtoScore = (v: unknown): v is number => dtoCount(v) && v >= 1 && v <= 5;
+const dtoMean = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 5);
+const dtoStatus = (v: unknown) => v === 'submitted' || v === 'viewed' || v === 'acknowledged';
+const dtoMonth = (v: unknown): v is string => dtoText(v) && /^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(v);
+const dtoPeriod = (v: unknown) => dtoText(v) && v.endsWith('-01') && dtoMonth(v.slice(0, -3));
+const dtoTimestamp = (v: unknown) => dtoText(v) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
+function validateScoreItems(value: unknown) {
+  for (const item of dtoArray(value)) {
+    const i = dtoRecord(item);
+    dtoCheck(dtoText(i.category) && dtoScore(i.score) && dtoNullableText(i.reason));
+  }
+}
+function validateScorecardView(value: unknown) {
+  const v = dtoRecord(value);
+  dtoCheck(dtoText(v.id) && dtoPeriod(v.period) && dtoStatus(v.status) && dtoText(v.wardCode) &&
+    typeof v.shareName === 'boolean' && dtoNullableText(v.ackNote) && dtoNullableText(v.ackAt));
+  validateScoreItems(v.items);
+}
+function validateCurrentScorecard(value: unknown) {
+  const v = dtoRecord(value);
+  dtoCheck(typeof v.eligible === 'boolean' && typeof v.frozen === 'boolean' && typeof v.shareName === 'boolean' &&
+    dtoPeriod(v.period) && (v.status === 'not_rated' || dtoStatus(v.status)) &&
+    v.frozen === (v.status === 'acknowledged') && dtoNullableText(v.ward) &&
+    dtoNullableText(v.message) && dtoNullableText(v.ackNote) && dtoNullableText(v.scorecardId));
+  if (v.councillor !== null) {
+    const c = dtoRecord(v.councillor); dtoCheck(dtoText(c.fullName) && dtoText(c.memberId));
+  }
+  const categories = dtoArray(v.categories);
+  for (const category of categories) {
+    const c = dtoRecord(category); dtoCheck(dtoText(c.code) && dtoText(c.label) && Number.isInteger(c.position));
+  }
+  dtoCheck(!v.eligible || v.councillor !== null);
+  validateScoreItems(v.items);
+}
+function scorecardQuery(params: ScorecardPageFilters): ScorecardPageFilters {
+  const query = { ...params, ward: params.ward?.trim(), period: params.period?.trim() };
+  if ((query.period !== undefined && !dtoMonth(query.period)) ||
+      (query.ward !== undefined && (!query.ward || query.ward.length > 32)) ||
+      (query.status !== undefined && !dtoStatus(query.status)) ||
+      (query.limit !== undefined && (!dtoCount(query.limit) || query.limit < 1 || query.limit > 200)) ||
+      (query.offset !== undefined && !dtoCount(query.offset))) throw new ApiClientError(400, 'bad_request');
+  return query;
+}
+function validateScorecardRollup(value: unknown, q: ScorecardPageFilters, kind: 'summary' | 'inbox' | 'reasons') {
+  const v = dtoRecord(value);
+  dtoCheck(dtoPeriod(v.period) && dtoTimestamp(v.asOf) && (v.scope === 'ward' || v.scope === 'region' || v.scope === 'national') &&
+    v.statusFilter === (q.status ?? null) && v.wardFilter === (q.ward ?? null) &&
+    (!q.period || v.period === `${q.period}-01`));
+  if (kind === 'summary') {
+    dtoCheck(dtoCount(v.scorecards) && dtoCount(v.itemCount) && dtoCount(v.lowScoreItems) &&
+      dtoCount(v.lowScorecards) && dtoCount(v.awaitingAcknowledgement) && dtoMean(v.overallAverage));
+    dtoCheck((v.itemCount === 0) === (v.overallAverage === null) && v.lowScoreItems <= v.itemCount &&
+      v.lowScorecards <= v.scorecards && v.awaitingAcknowledgement <= v.scorecards &&
+      (q.status !== 'acknowledged' || v.awaitingAcknowledgement === 0));
+    for (const category of dtoArray(v.categories)) {
+      const c = dtoRecord(category); const dist = dtoRecord(c.distribution);
+      dtoCheck(dtoText(c.category) && dtoText(c.label) && Number.isInteger(c.position) && typeof c.active === 'boolean' &&
+        dtoCount(c.count) && dtoCount(c.lowCount) && dtoMean(c.average) && (c.count === 0) === (c.average === null));
+      for (const key of ['1', '2', '3', '4', '5']) dtoCheck(dtoCount(dist[key]));
+      dtoCheck(['1', '2', '3', '4', '5'].reduce((sum, key) => sum + Number(dist[key]), 0) === c.count &&
+        Number(dist['1']) + Number(dist['2']) === c.lowCount);
+    }
+    return;
+  }
+  const rows = dtoArray(v.rows);
+  dtoCheck(dtoCount(v.total) && dtoCount(v.limit) && v.limit >= 1 && v.limit <= 200 &&
+    v.limit === (q.limit ?? 100) && v.offset === (q.offset ?? 0) && dtoCount(v.offset) &&
+    typeof v.hasMore === 'boolean' && rows.length === Math.min(v.limit, Math.max(0, v.total - v.offset)) &&
+    v.hasMore === (v.offset + rows.length < v.total));
+  for (const row of rows) {
+    const r = dtoRecord(row);
+    dtoCheck(dtoText(r.wardCode) && dtoNullableText(r.wardName) && r.period === v.period && dtoStatus(r.status) &&
+      (!q.status || r.status === q.status) && (!q.ward || r.wardCode === q.ward) &&
+      typeof r.shareName === 'boolean' && dtoNullableText(r.memberPublicCode) && (r.shareName || r.memberPublicCode === null));
+    if (kind === 'inbox') {
+      dtoCheck(dtoText(r.id) && dtoMean(r.average) && dtoCount(r.lowCount) && dtoText(r.submittedAt));
+      validateScoreItems(r.items);
+    } else {
+      dtoCheck(dtoText(r.scorecardId) && dtoText(r.category) && dtoText(r.label) && dtoScore(r.score) && r.score <= 2 && dtoNullableText(r.reason));
+    }
+  }
+}
+function validateCaseMetrics(value: unknown) {
+  const v = dtoRecord(value);
+  dtoCheck(dtoCount(v.total) && dtoCount(v.open) && dtoCount(v.resolved) && dtoCount(v.slaBreached) &&
+    v.open + v.resolved === v.total && v.slaBreached <= v.open);
+  dtoCheck(v.total === 0 ? v.resolutionRatePct === null : typeof v.resolutionRatePct === 'number' &&
+    Number.isFinite(v.resolutionRatePct) && v.resolutionRatePct >= 0 && v.resolutionRatePct <= 100);
+}
+function validateBreakdown(value: unknown) {
+  for (const row of dtoArray(value)) { const r = dtoRecord(row); dtoCheck(dtoText(r.label) && dtoCount(r.value)); }
+}
+function validateDashboardPerformance(value: unknown) {
+  const v = dtoRecord(value); const activity = dtoRecord(v.activity); const modules = dtoRecord(activity.modules);
+  dtoCheck(dtoTimestamp(activity.asOf) && dtoCount(activity.periodDays));
+  if (modules.cases === null) return;
+  const cases = dtoRecord(modules.cases); const p = dtoRecord(cases.performance);
+  dtoCheck(dtoTimestamp(p.asOf)); validateCaseMetrics(p.totals);
+  validateBreakdown(p.byStatus); validateBreakdown(p.byCategory); validateBreakdown(cases.dailyCreated);
+  for (const row of dtoArray(p.byWard)) { validateCaseMetrics(row); dtoCheck(dtoNullableText(dtoRecord(row).wardCode)); }
+}
+function validateWardSummary(value: unknown, ward?: string) {
+  const v = dtoRecord(value); const rows = dtoArray(v.rows);
+  dtoCheck(dtoTimestamp(v.asOf) && v.wardFilter === (ward ?? null) && dtoCount(v.total) && v.total === rows.length);
+  const codes = new Set<string>();
+  for (const row of rows) {
+    const r = dtoRecord(row);
+    dtoCheck(dtoText(r.code) && dtoText(r.name) && dtoCount(r.members) && typeof r.candidateRecorded === 'boolean' &&
+      (!ward || r.code === ward) && !codes.has(r.code));
+    codes.add(r.code);
+    if (r.cases !== null) validateCaseMetrics(r.cases);
+    if (r.councillor !== null) dtoCheck(dtoText(dtoRecord(r.councillor).fullName));
+  }
+}
+function validateList(value: unknown, kind: 'ratings' | 'verifications' | 'cases' | 'escalations') {
+  const v = dtoRecord(value); const items = dtoArray(v.items);
+  dtoCheck(dtoCount(v.total) && items.length <= v.total);
+  for (const item of items) {
+    const i = dtoRecord(item); dtoCheck(dtoText(i.id) && dtoText(i.createdAt));
+    if (kind === 'ratings') dtoCheck(dtoScore(i.rating) && dtoText(i.targetId) && dtoText(i.targetType) && dtoNullableText(i.reason));
+    else if (kind === 'verifications') dtoCheck(dtoText(i.memberId) && dtoText(i.serviceRequestId) &&
+      dtoText(i.verdict) && ['fixed', 'not_fixed', 'partial'].includes(i.verdict) && dtoNullableText(i.note));
+    else {
+      dtoCheck(dtoText(i.status) && dtoText(i.category) && dtoNullableText(i.wardCode));
+      if (kind === 'escalations') dtoCheck(dtoText(i.escalationReason) && ['sla_breach', 'stuck', 'overdue'].includes(i.escalationReason));
+    }
   }
 }
 
@@ -1417,8 +1573,10 @@ export const api = {
   },
 
   // ── Ratings ─────────────────────────────────────────────────────
-  listRatings(params?: Record<string, string>): Promise<{ items: Rating[]; total: number }> {
-    return request(`/ratings${qs(params ?? {})}`);
+  async listRatings(params?: Record<string, string>): Promise<{ items: Rating[]; total: number }> {
+    const result = await request<{ items: Rating[]; total: number }>(`/ratings${qs(params ?? {})}`, { cache: 'no-store' });
+    validateList(result, 'ratings');
+    return result;
   },
   createRating(payload: unknown): Promise<Rating> {
     return request('/ratings', { method: 'POST', body: JSON.stringify(payload) });
@@ -1468,8 +1626,10 @@ export const api = {
   },
 
   // ── Verifications ───────────────────────────────────────────────
-  listVerifications(params?: Record<string, string>): Promise<{ items: Verification[]; total: number }> {
-    return request(`/verifications${qs(params ?? {})}`);
+  async listVerifications(params?: Record<string, string>): Promise<{ items: Verification[]; total: number }> {
+    const result = await request<{ items: Verification[]; total: number }>(`/verifications${qs(params ?? {})}`, { cache: 'no-store' });
+    validateList(result, 'verifications');
+    return result;
   },
   createVerification(payload: unknown): Promise<Verification> {
     return request('/verifications', { method: 'POST', body: JSON.stringify(payload) });
@@ -1490,22 +1650,27 @@ export const api = {
   },
 
   // ── CRM Desktop ────────────────────────────────────────────────
-  crmDashboard(): Promise<{
-    activity: import('../types').DashboardActivity;
-    activeMembers: number;
-    openCases: number;
-    openPetitions: number;
-    openParticipations: number;
-  }> {
-    return request('/crm/dashboard');
+  async crmDashboard(): Promise<CrmDashboard> {
+    const result = await request<CrmDashboard>('/crm/dashboard', { cache: 'no-store' });
+    validateDashboardPerformance(result);
+    return result;
   },
-  crmEngagements(params?: Record<string, string>): Promise<{
+  async crmWardSummary(params: { ward?: string } = {}): Promise<WardSummary> {
+    const ward = params.ward?.trim();
+    if (ward !== undefined && (!ward || ward.length > 32)) throw new ApiClientError(400, 'bad_request');
+    const result = await request<WardSummary>(`/crm/wards/summary${qs({ ward })}`, { cache: 'no-store' });
+    validateWardSummary(result, ward);
+    return result;
+  },
+  async crmEngagements(params?: Record<string, string>): Promise<{
     items: ServiceRequest[];
     total: number;
     limit: number;
     offset: number;
   }> {
-    return request(`/crm/engagements${qs(params ?? {})}`);
+    const result = await request<{ items: ServiceRequest[]; total: number; limit: number; offset: number }>(`/crm/engagements${qs(params ?? {})}`, { cache: 'no-store' });
+    validateList(result, 'cases');
+    return result;
   },
   async allCrmEngagements(): Promise<{ items: ServiceRequest[]; total: number }> {
     const items: ServiceRequest[] = [];
@@ -1518,8 +1683,10 @@ export const api = {
     } while (items.length < total);
     return { items, total };
   },
-  crmEscalations(): Promise<{ items: ServiceRequest[]; total: number }> {
-    return request('/crm/escalations');
+  async crmEscalations(): Promise<{ items: (ServiceRequest & { escalationReason: 'sla_breach' | 'stuck' | 'overdue' })[]; total: number }> {
+    const result = await request<{ items: (ServiceRequest & { escalationReason: 'sla_breach' | 'stuck' | 'overdue' })[]; total: number }>('/crm/escalations', { cache: 'no-store' });
+    validateList(result, 'escalations');
+    return result;
   },
   crmMembers(params?: Record<string, string>): Promise<{
     items: Member[];
@@ -1732,8 +1899,10 @@ export const api = {
   // the member opted into shareName), wards, categories, scores and counts —
   // never sealed names/emails. The reasons are the actionable content (AC-O2).
   /** FR-S4: the caller's current-month card — eligibility, status, categories. */
-  getCurrentScorecard(): Promise<ScorecardCurrent> {
-    return request('/scorecards/current');
+  async getCurrentScorecard(): Promise<ScorecardCurrent> {
+    const result = await request<ScorecardCurrent>('/scorecards/current', { cache: 'no-store' });
+    validateCurrentScorecard(result);
+    return result;
   },
   /** FR-S2/S3: submit or update this month's scorecard (100-word rule for ≤2). */
   submitScorecard(payload: SubmitScorecardInput): Promise<ScorecardView> {
@@ -1748,28 +1917,39 @@ export const api = {
     return request('/scorecards/categories');
   },
   /** FR-S6/S7: scorecards in scope for the acknowledgement workflow. */
-  getScorecardInbox(
-    params: { period?: string; ward?: string; status?: string; limit?: number } = {},
-  ): Promise<ScorecardInbox> {
-    return request(`/scorecards/inbox${qs(params)}`);
+  async getScorecardInbox(params: ScorecardPageFilters = {}): Promise<ScorecardInbox> {
+    const q = scorecardQuery(params);
+    const result = await request<ScorecardInbox>(`/scorecards/inbox${qs({ ...q })}`, { cache: 'no-store' });
+    validateScorecardRollup(result, q, 'inbox');
+    return result;
   },
   /** FR-S8: per-category averages, distribution and counts across scope. */
-  getScorecardSummary(params: { period?: string; ward?: string } = {}): Promise<ScorecardSummary> {
-    return request(`/scorecards/summary${qs(params)}`);
+  async getScorecardSummary(params: ScorecardFilters = {}): Promise<ScorecardSummary> {
+    const q = scorecardQuery(params);
+    const result = await request<ScorecardSummary>(`/scorecards/summary${qs({ ...q })}`, { cache: 'no-store' });
+    validateScorecardRollup(result, q, 'summary');
+    return result;
   },
   /** FR-S8: the ≤2 reasons queue — the actionable complaints across scope. */
-  getScorecardLowReasons(
-    params: { period?: string; ward?: string; status?: string; limit?: number } = {},
-  ): Promise<ScorecardLowReasons> {
-    return request(`/scorecards/low-reasons${qs(params)}`);
+  async getScorecardLowReasons(params: ScorecardPageFilters = {}): Promise<ScorecardLowReasons> {
+    const q = scorecardQuery(params);
+    const result = await request<ScorecardLowReasons>(`/scorecards/low-reasons${qs({ ...q })}`, { cache: 'no-store' });
+    validateScorecardRollup(result, q, 'reasons');
+    return result;
   },
   /** FR-S6: opening a submitted scorecard marks it `viewed`. */
-  viewScorecard(id: string): Promise<ScorecardView> {
-    return request(`/scorecards/${id}/view`, { method: 'POST' });
+  async viewScorecard(id: string): Promise<ScorecardView> {
+    const result = await request<ScorecardView>(`/scorecards/${id}/view`, { method: 'POST' });
+    validateScorecardView(result);
+    dtoCheck(result.id === id);
+    return result;
   },
   /** FR-S6: acknowledge a scorecard and notify the member. */
-  acknowledgeScorecard(id: string, payload: AcknowledgeScorecardInput = {}): Promise<ScorecardView> {
-    return request(`/scorecards/${id}/acknowledge`, { method: 'POST', body: JSON.stringify(payload) });
+  async acknowledgeScorecard(id: string, payload: AcknowledgeScorecardInput = {}): Promise<ScorecardView> {
+    const result = await request<ScorecardView>(`/scorecards/${id}/acknowledge`, { method: 'POST', body: JSON.stringify(payload) });
+    validateScorecardView(result);
+    dtoCheck(result.id === id);
+    return result;
   },
 
   // ── SuperAdmin analytics (analytics:read) ────────────────────────

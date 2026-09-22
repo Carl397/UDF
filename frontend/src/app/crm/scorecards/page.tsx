@@ -1,341 +1,246 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '../../../lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, dataReadError } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth';
 import { Perm, can } from '../../../lib/caps';
 import {
-  CrmBadge, CrmFilters, CrmModal, CrmPageHeader, CrmSmallButton, CrmStatGrid,
+  CrmBadge, CrmCard, CrmFilters, CrmModal, CrmPageHeader, CrmSmallButton, CrmStatGrid,
   CrmTable, downloadCsv, fmtDate,
 } from '../../../components/crm/ui';
 import type {
-  ScorecardInbox, ScorecardInboxRow, ScorecardLowReasons, ScorecardSummary, ScorecardView,
+  ScorecardInboxRow, ScorecardPageMeta, ScorecardStatus, ScorecardSummary, ScorecardView,
 } from '../../../types';
 
-/**
- * CRM Scorecards — the councillor accountability rollups and the acknowledgement
- * workflow (PRD-growth FR-S6/S7/S8).
- *
- * Three server rollups over the caller's scope, fetched together:
- *  - `summary`     — per-category averages, the 1–5 distribution and counts.
- *  - `low-reasons` — the ≤2 queue: the compulsory 100-word complaints, which are
- *                    the actionable content a councillor/staff must respond to.
- *  - `inbox`       — each submitted card, so it can be viewed (submitted→viewed)
- *                    and acknowledged (→acknowledged), which notifies the member.
- *
- * Acknowledge is gated on `rating:acknowledge` (councillor + national only); the
- * page itself is gated on `rating:scorecard_read`, so an analyst/regional/coordinator
- * sees the rollups but not the Acknowledge control their role cannot exercise.
- *
- * HARD PRIVACY RULE (FR-S7, mirrors AC-O2): a card is attributed to a member only
- * as their PUBLIC CODE and only when they opted into `shareName`; otherwise the
- * row reads "Anonymous". No sealed name, email or phone number is ever fetched or
- * rendered here — the reasons are the point, not the author.
- */
+const LIMIT = 100;
 
-/** The member label for a row: their public code when shared, else anonymous. */
+/** The member label never reveals an identity without the saved opt-in. */
 function memberLabel(row: { shareName: boolean; memberPublicCode: string | null }): string {
   return row.shareName ? row.memberPublicCode ?? 'Shared' : 'Anonymous';
+}
+
+/** Each panel owns its request, retry and generation. A changed key hides old data immediately. */
+function usePanel<T>(key: string | null, read: () => Promise<T>) {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ key: string | null; attempt: number; data: T | null; error: string | null; loading: boolean }>({
+    key: null, attempt: 0, data: null, error: null, loading: true,
+  });
+  useEffect(() => {
+    let active = true;
+    setState({ key, attempt, data: null, error: null, loading: true });
+    if (key !== null) {
+      read().then((data) => {
+        if (active) setState({ key, attempt, data, error: null, loading: false });
+      }).catch((error: unknown) => {
+        if (active) setState({ key, attempt, data: null, error: dataReadError(error), loading: false });
+      });
+    }
+    return () => { active = false; };
+  }, [key, attempt, read]);
+  const current = state.key === key && state.attempt === attempt;
+  return {
+    data: current ? state.data : null,
+    error: current ? state.error : null,
+    loading: !current || state.loading,
+    retry: () => setAttempt((n) => n + 1),
+  };
+}
+
+function PanelStatus({ loading, error, asOf, retry }: { loading: boolean; error: string | null; asOf?: string; retry: () => void }) {
+  return <div style={{ marginBottom: 12, fontSize: 13 }} aria-live="polite">
+    {loading ? <p>Loading…</p> : error ? <p role="alert">{error}</p> : asOf ?
+      <p>Last successful fetch · database as of <time dateTime={asOf}>{asOf}</time></p> : null}
+    <CrmSmallButton onClick={retry} disabled={loading}>{error ? 'Retry' : 'Refresh'}</CrmSmallButton>
+  </div>;
+}
+
+function PageControls({ data, onOffset }: { data: ScorecardPageMeta; onOffset: (offset: number) => void }) {
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+    <span>{data.total.toLocaleString()} matching records · page {Math.floor(data.offset / data.limit) + 1}</span>
+    <CrmSmallButton disabled={data.offset === 0} onClick={() => onOffset(Math.max(0, data.offset - data.limit))}>Previous</CrmSmallButton>
+    <CrmSmallButton disabled={!data.hasMore} onClick={() => onOffset(data.offset + data.limit)}>Next</CrmSmallButton>
+  </div>;
 }
 
 export default function CrmScorecards() {
   const { permissions } = useAuth();
   const canAck = can(permissions, Perm.RATING_ACKNOWLEDGE);
-
-  const [summary, setSummary] = useState<ScorecardSummary | null>(null);
-  const [inbox, setInbox] = useState<ScorecardInbox | null>(null);
-  const [lowReasons, setLowReasons] = useState<ScorecardLowReasons | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Filters: period (YYYY-MM, blank = this month), ward (within scope), status.
+  const [serverPeriod, setServerPeriod] = useState<string | null>(null);
+  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [periodAttempt, setPeriodAttempt] = useState(0);
   const [period, setPeriod] = useState('');
   const [ward, setWard] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState<ScorecardStatus | ''>('');
+  const [inboxOffset, setInboxOffset] = useState(0);
+  const [reasonOffset, setReasonOffset] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const refreshPanels = useCallback(() => setRefresh((n) => n + 1), []);
 
-  // Acknowledgement modal state.
+  // Resolve the database's current month once, never the browser's clock. Every
+  // displayed panel then requests the same explicit month, even across midnight.
+  useEffect(() => {
+    let active = true;
+    setPeriodError(null);
+    api.getScorecardSummary().then((data) => {
+      if (active) setServerPeriod(data.period.slice(0, 7));
+    }).catch((error: unknown) => { if (active) setPeriodError(dataReadError(error)); });
+    return () => { active = false; };
+  }, [periodAttempt]);
+
+  const resolvedPeriod = period || serverPeriod;
+  const filterKey = resolvedPeriod ? JSON.stringify([resolvedPeriod, ward.trim(), status, refresh]) : null;
+  const readSummary = useCallback(() => api.getScorecardSummary({
+    period: resolvedPeriod!, ward: ward.trim() || undefined, status: status || undefined,
+  }), [resolvedPeriod, ward, status]);
+  const readInbox = useCallback(() => api.getScorecardInbox({
+    period: resolvedPeriod!, ward: ward.trim() || undefined, status: status || undefined, limit: LIMIT, offset: inboxOffset,
+  }), [resolvedPeriod, ward, status, inboxOffset]);
+  const readReasons = useCallback(() => api.getScorecardLowReasons({
+    period: resolvedPeriod!, ward: ward.trim() || undefined, status: status || undefined, limit: LIMIT, offset: reasonOffset,
+  }), [resolvedPeriod, ward, status, reasonOffset]);
+  const summaryPanel = usePanel(filterKey, readSummary);
+  const inboxPanel = usePanel(filterKey === null ? null : `${filterKey}:${inboxOffset}`, readInbox);
+  const reasonsPanel = usePanel(filterKey === null ? null : `${filterKey}:${reasonOffset}`, readReasons);
+  const summary = summaryPanel.data;
+  const inbox = inboxPanel.data;
+  const lowReasons = reasonsPanel.data;
+
   const [selected, setSelected] = useState<ScorecardInboxRow | null>(null);
   const [detail, setDetail] = useState<ScorecardView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [ackNote, setAckNote] = useState('');
   const [ackBusy, setAckBusy] = useState(false);
+  const detailGeneration = useRef(0);
+  useEffect(() => () => { detailGeneration.current++; }, []);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    const base = { period: period || undefined, ward: ward || undefined };
-    const withStatus = { ...base, status: status || undefined, limit: 200 };
-    Promise.all([
-      api.getScorecardSummary(base),
-      api.getScorecardInbox(withStatus),
-      api.getScorecardLowReasons(withStatus),
-    ])
-      .then(([s, i, l]) => {
-        setSummary(s);
-        setInbox(i);
-        setLowReasons(l);
-        setError(null);
-      })
-      .catch((e: { message?: string }) => {
-        setSummary(null);
-        setInbox(null);
-        setLowReasons(null);
-        setError(e?.message ?? 'Could not load the scorecards.');
-      })
-      .finally(() => setLoading(false));
-  }, [period, ward, status]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Opening a card marks it viewed (submitted→viewed) and loads its detail.
-  function openCard(row: ScorecardInboxRow) {
-    setSelected(row);
-    setDetail(null);
-    setAckNote('');
-    setDetailLoading(true);
-    api
-      .viewScorecard(row.id)
-      .then(setDetail)
-      .catch(() => setDetail(null))
-      .finally(() => setDetailLoading(false));
-  }
-
-  async function acknowledge() {
-    if (!selected || ackBusy) return;
-    setAckBusy(true);
+  function closeCard() { detailGeneration.current++; setSelected(null); setDetail(null); }
+  function filtersChanged() { setInboxOffset(0); setReasonOffset(0); closeCard(); }
+  async function openCard(row: ScorecardInboxRow) {
+    const generation = ++detailGeneration.current;
+    setSelected(row); setDetail(null); setDetailError(null); setAckNote(''); setDetailLoading(true);
     try {
-      const saved = await api.acknowledgeScorecard(selected.id, { note: ackNote.trim() || null });
-      setDetail(saved);
-      setSelected(null);
-      load();
-    } catch (e) {
-      setError((e as { message?: string })?.message ?? 'Could not acknowledge that scorecard.');
+      const value = await api.viewScorecard(row.id);
+      if (generation === detailGeneration.current) setDetail(value);
+    } catch (error) {
+      if (generation === detailGeneration.current) setDetailError(dataReadError(error));
     } finally {
-      setAckBusy(false);
+      // A lost response can still have marked the card viewed on the server.
+      refreshPanels();
+      if (generation === detailGeneration.current) setDetailLoading(false);
     }
   }
-
+  async function acknowledge() {
+    if (!selected || !detail || detail.status === 'acknowledged' || ackBusy) return;
+    const generation = detailGeneration.current;
+    setAckBusy(true); setDetailError(null);
+    try {
+      await api.acknowledgeScorecard(selected.id, { note: ackNote.trim() || null });
+      if (generation === detailGeneration.current) closeCard();
+    } catch (error) {
+      if (generation === detailGeneration.current) { setDetail(null); setDetailError(dataReadError(error)); }
+    } finally {
+      setAckBusy(false); refreshPanels();
+    }
+  }
   function exportReasons() {
     if (!lowReasons) return;
-    downloadCsv(
-      'councillor-scorecard-reasons',
+    downloadCsv('councillor-scorecard-reasons-current-page',
       ['Period', 'Ward', 'Category', 'Score', 'Member', 'Status', 'Reason'],
-      lowReasons.rows.map((r) => [
-        r.period,
-        r.wardName ?? r.wardCode,
-        r.label,
-        r.score,
-        memberLabel(r),
-        r.status,
-        r.reason ?? '',
-      ]),
-    );
+      lowReasons.rows.map((r) => [r.period, r.wardName ?? r.wardCode, r.label, r.score, memberLabel(r), r.status, r.reason ?? '']));
   }
 
-  const awaiting = inbox ? inbox.rows.filter((r) => r.status !== 'acknowledged').length : 0;
-  const stats = summary
-    ? [
-        { label: 'Scorecards', value: summary.scorecards },
-        { label: 'Overall average', value: summary.overallAverage ?? '—' },
-        { label: 'Complaints (≤2)', value: lowReasons?.rows.length ?? 0, tone: 'warn' as const },
-        { label: 'Awaiting acknowledgement', value: awaiting, tone: 'danger' as const },
-      ]
-    : [];
-
-  const scope = summary?.scope ?? inbox?.scope ?? 'scoped';
-  const shownPeriod = summary?.period ?? '';
-
-  return (
-    <div>
-      <CrmPageHeader
-        title="Scorecards"
-        subtitle={`Monthly councillor performance${shownPeriod ? ` · ${shownPeriod.slice(0, 7)}` : ''} · scope: ${scope}.`}
-        actions={<CrmSmallButton onClick={exportReasons} disabled={!lowReasons}>Export ≤2 reasons</CrmSmallButton>}
-      />
-
-      <CrmFilters>
-        <input
-          type="month"
-          value={period}
-          aria-label="Period (month)"
-          onChange={(e) => setPeriod(e.target.value)}
-        />
-        <input
-          type="text"
-          value={ward}
-          placeholder="Filter by ward code (e.g. CPT-W009)"
-          onChange={(e) => setWard(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') load();
-          }}
-        />
-        <select value={status} aria-label="Status" onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          <option value="submitted">Submitted</option>
-          <option value="viewed">Viewed</option>
-          <option value="acknowledged">Acknowledged</option>
-        </select>
-        <CrmSmallButton onClick={load}>Apply</CrmSmallButton>
-        {(period || ward || status) && (
-          <CrmSmallButton
-            onClick={() => {
-              setPeriod('');
-              setWard('');
-              setStatus('');
-            }}
-          >
-            Clear
-          </CrmSmallButton>
-        )}
-      </CrmFilters>
-
-      {error && (
-        <div style={{ padding: 16, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, marginBottom: 20 }}>
-          <p style={{ margin: 0, fontSize: 13, color: '#991b1b', fontWeight: 500 }}>{error}</p>
-        </div>
-      )}
-
-      {loading ? (
-        <p style={{ color: '#64748b' }}>Loading scorecards…</p>
-      ) : summary && inbox && lowReasons ? (
-        <>
-          <CrmStatGrid stats={stats} />
-
-          <div style={{ padding: 16, background: '#f6f3f1', border: '1px solid #ece5e1', borderRadius: 8, marginBottom: 20 }}>
-            <p style={{ margin: 0, fontSize: 13, color: '#57534e' }}>
-              <strong>Privacy note:</strong> a scorecard is attributed to a member only as their public reference and only
-              when they chose to share it — otherwise it reads <strong>Anonymous</strong>. A score of 1–2 carries a
-              compulsory 100-word reason; those complaints are the actionable queue below. Acknowledging a card notifies
-              the member and freezes it for the month.
-            </p>
-          </div>
-
-          {/* FR-S8: category rollups */}
-          <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px' }}>Category performance</h2>
-          <CrmTable
-            columns={['Category', 'Rated', 'Average', '★1', '★2', '★3', '★4', '★5', '≤2']}
+  return <div>
+    <CrmPageHeader title="Scorecards"
+      subtitle={`Private monthly councillor feedback${resolvedPeriod ? ` · ${resolvedPeriod}` : ''}. Separate from legacy ratings and service-case performance.`}
+      actions={<CrmSmallButton onClick={exportReasons} disabled={!lowReasons}>Export ≤2 reasons · current page</CrmSmallButton>} />
+    <CrmFilters>
+      <input type="month" value={period} aria-label="Period (month)" onChange={(e) => { setPeriod(e.target.value); filtersChanged(); }} />
+      <input type="text" value={ward} maxLength={32} aria-label="Ward code" placeholder="Ward code (e.g. CPT-W009)"
+        onChange={(e) => { setWard(e.target.value); filtersChanged(); }} />
+      <select value={status} aria-label="Status" onChange={(e) => {
+        const next = e.target.value;
+        setStatus(next === 'submitted' || next === 'viewed' || next === 'acknowledged' ? next : ''); filtersChanged();
+      }}>
+        <option value="">All statuses</option><option value="submitted">Submitted</option>
+        <option value="viewed">Viewed</option><option value="acknowledged">Acknowledged</option>
+      </select>
+      <CrmSmallButton onClick={refreshPanels}>Refresh all</CrmSmallButton>
+      <CrmSmallButton onClick={() => { setPeriod(''); setWard(''); setStatus(''); filtersChanged(); }}>Clear filters</CrmSmallButton>
+    </CrmFilters>
+    <p style={{ fontSize: 13, color: '#57534e' }}>Only an opted-in public membership reference is shown; otherwise feedback is anonymous.
+      Acknowledgement notifies the member and freezes the card for the month. Each panel has its own database snapshot.</p>
+    {!resolvedPeriod ? <CrmCard title="Resolve current month">
+      <p role={periodError ? 'alert' : 'status'}>{periodError ?? 'Loading the server’s current month…'}</p>
+      {periodError && <CrmSmallButton onClick={() => setPeriodAttempt((n) => n + 1)}>Retry</CrmSmallButton>}
+    </CrmCard> : <>
+      <CrmCard title="Monthly summary · all matching cards">
+        <PanelStatus {...summaryPanel} asOf={summary?.asOf} />
+        {summary && <>
+          <CrmStatGrid stats={[
+            { label: 'Scorecards', value: summary.scorecards },
+            { label: 'Scored items', value: summary.itemCount },
+            { label: 'Overall average / 5', value: summary.overallAverage ?? 'Unrated' },
+            { label: 'Low-score items (≤2)', value: summary.lowScoreItems, tone: 'warn' },
+            { label: 'Cards with a low score', value: summary.lowScorecards },
+            { label: 'Awaiting acknowledgement', value: summary.awaitingAcknowledgement },
+          ]} />
+          {summary.scorecards === 0 && <p>No scorecards match these filters.</p>}
+          <p style={{ fontSize: 12 }}>Current category labels and order; inactive categories remain when represented in submissions.</p>
+          <CrmTable columns={['Category', 'Rated', 'Average / 5', '1', '2', '3', '4', '5', '≤2']}
             rows={summary.categories.map((c) => [
-              <span key="c" style={{ fontWeight: 600 }}>{c.label}</span>,
-              c.count,
-              <strong key="a">{c.average ?? '—'}</strong>,
-              c.distribution['1'] ?? 0,
-              c.distribution['2'] ?? 0,
-              c.distribution['3'] ?? 0,
-              c.distribution['4'] ?? 0,
-              c.distribution['5'] ?? 0,
-              c.lowCount ? <span key="l" style={{ color: '#C8102E', fontWeight: 600 }}>{c.lowCount}</span> : 0,
-            ])}
-            empty="No categories rated in this period."
-          />
-
-          {/* FR-S8: the ≤2 reasons queue */}
-          <h2 style={{ fontSize: 16, fontWeight: 700, margin: '24px 0 12px' }}>Complaints requiring a response (≤2)</h2>
-          <CrmTable
-            columns={['Category', 'Score', 'Ward', 'Member', 'Status', 'Reason']}
-            rows={lowReasons.rows.map((r, i) => [
-              <span key="c" style={{ fontWeight: 600 }}>{r.label}</span>,
-              <CrmBadge key="s" value={r.score <= 1 ? 'sla_breach' : 'pending'} />,
-              r.wardName ?? <code key="w">{r.wardCode}</code>,
-              memberLabel(r),
-              <CrmBadge key="st" value={r.status} />,
-              <span key="r" style={{ maxWidth: 460, display: 'inline-block', whiteSpace: 'pre-wrap' }}>{r.reason ?? '—'}</span>,
-            ])}
-            empty="No scores of 1–2 in this period — nothing needs a written response."
-          />
-
-          {/* FR-S6/S7: the acknowledgement inbox */}
-          <h2 style={{ fontSize: 16, fontWeight: 700, margin: '24px 0 12px' }}>Submissions</h2>
-          <CrmTable
-            columns={['Ward', 'Member', 'Average', '≤2', 'Status', 'Submitted', '']}
-            rows={inbox.rows.map((r) => [
-              r.wardName ?? <code key="w">{r.wardCode}</code>,
-              memberLabel(r),
-              r.average ?? '—',
-              r.lowCount ? <span key="l" style={{ color: '#C8102E', fontWeight: 600 }}>{r.lowCount}</span> : 0,
-              <CrmBadge key="s" value={r.status} />,
-              fmtDate(r.submittedAt),
-              <CrmSmallButton key="v" onClick={() => openCard(r)}>
-                {r.status === 'acknowledged' ? 'View' : canAck ? 'View & acknowledge' : 'View'}
-              </CrmSmallButton>,
-            ])}
-            empty="No scorecards submitted in this period."
-          />
-        </>
-      ) : (
-        !error && <p style={{ color: '#64748b' }}>Could not load the scorecards.</p>
-      )}
-
-      {selected && (
-        <CrmModal
-          wide
-          title={`Scorecard · ${selected.wardName ?? selected.wardCode} · ${selected.period.slice(0, 7)}`}
-          onClose={() => setSelected(null)}
-        >
-          {detailLoading ? (
-            <p style={{ color: '#64748b' }}>Loading scorecard…</p>
-          ) : (
-            <>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16, fontSize: 13, color: '#57534e' }}>
-                <CrmBadge value={detail?.status ?? selected.status} />
-                <span>Member: <strong>{memberLabel(selected)}</strong></span>
-                <span>Average: <strong>{selected.average ?? '—'}</strong></span>
-                <span>Complaints (≤2): <strong>{selected.lowCount}</strong></span>
-                <span>Submitted: {fmtDate(selected.submittedAt)}</span>
-              </div>
-
-              <CrmTable
-                columns={['Category', 'Score', 'Reason']}
-                rows={(detail?.items ?? selected.items).map((it) => [
-                  <span key="c" style={{ fontWeight: 600 }}>{categoryLabel(summary, it.category)}</span>,
-                  <CrmBadge key="s" value={it.score <= 2 ? 'sla_breach' : 'accepted'} />,
-                  <span key="r" style={{ maxWidth: 460, display: 'inline-block', whiteSpace: 'pre-wrap' }}>{it.reason ?? '—'}</span>,
-                ])}
-                empty="No categories on this scorecard."
-              />
-
-              {(detail?.status ?? selected.status) === 'acknowledged' ? (
-                <div style={{ marginTop: 16, padding: 14, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
-                  <p style={{ margin: 0, fontSize: 13, color: '#166534' }}>
-                    <strong>Acknowledged</strong> {detail?.ackAt ? `on ${fmtDate(detail.ackAt)}` : ''}
-                    {detail?.ackNote ? ` — “${detail.ackNote}”` : '.'} The member has been notified and this month is frozen.
-                  </p>
-                </div>
-              ) : canAck ? (
-                <div style={{ marginTop: 16 }}>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#8a817b', marginBottom: 6 }}>
-                    Acknowledgement note (optional, sent to the member)
-                  </label>
-                  <textarea
-                    value={ackNote}
-                    onChange={(e) => setAckNote(e.target.value)}
-                    rows={3}
-                    maxLength={1000}
-                    placeholder="Thank the member and say what happens next…"
-                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px', border: '1px solid #ece5e1', borderRadius: 6, fontSize: 14, fontFamily: 'inherit' }}
-                  />
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-                    <CrmSmallButton onClick={acknowledge} disabled={ackBusy}>
-                      {ackBusy ? 'Acknowledging…' : 'Acknowledge & notify member'}
-                    </CrmSmallButton>
-                    <CrmSmallButton onClick={() => setSelected(null)}>Close</CrmSmallButton>
-                  </div>
-                </div>
-              ) : (
-                <p style={{ marginTop: 16, fontSize: 13, color: '#8a817b' }}>
-                  Your role can review scorecards but not acknowledge them — acknowledgement is reserved for the ward
-                  councillor and national admin.
-                </p>
-              )}
-            </>
-          )}
-        </CrmModal>
-      )}
-    </div>
-  );
+              `${c.label}${c.active ? '' : ' (inactive)'}`, c.count, c.average ?? 'Unrated',
+              c.distribution['1'], c.distribution['2'], c.distribution['3'], c.distribution['4'], c.distribution['5'], c.lowCount,
+            ])} empty="No categories in this period." />
+        </>}
+      </CrmCard>
+      <CrmCard title="Low-score reasons · individual category items (≤2)">
+        <PanelStatus {...reasonsPanel} asOf={lowReasons?.asOf} />
+        {lowReasons && <>
+          <CrmTable columns={['Category', 'Score / 5', 'Ward', 'Member', 'Status', 'Reason']}
+            rows={lowReasons.rows.map((r) => [r.label,
+              <strong key="score" style={{ color: '#991b1b', fontVariantNumeric: 'tabular-nums' }}>{r.score} / 5</strong>,
+              r.wardName ?? r.wardCode, memberLabel(r), <CrmBadge key="status" value={r.status} />,
+              <span key="reason" style={{ maxWidth: 460, display: 'inline-block', whiteSpace: 'pre-wrap' }}>{r.reason ?? '—'}</span>,
+            ])} empty={lowReasons.total === 0 ? 'No scores of 1–2 match these filters.' : 'No items on this page. Return to the previous page or refresh.'} />
+          <PageControls data={lowReasons} onOffset={setReasonOffset} />
+        </>}
+      </CrmCard>
+      <CrmCard title="Submissions · distinct scorecards">
+        <PanelStatus {...inboxPanel} asOf={inbox?.asOf} />
+        {inbox && <>
+          <CrmTable columns={['Ward', 'Member', 'Average / 5', '≤2 items', 'Status', 'Submitted', 'Action']}
+            rows={inbox.rows.map((r) => [r.wardName ?? r.wardCode, memberLabel(r), r.average ?? 'Unrated', r.lowCount,
+              <CrmBadge key="status" value={r.status} />, fmtDate(r.submittedAt),
+              <CrmSmallButton key="view" onClick={() => openCard(r)}>{r.status === 'acknowledged' || !canAck ? 'View' : 'View & acknowledge'}</CrmSmallButton>,
+            ])} empty={inbox.total === 0 ? 'No scorecards match these filters.' : 'No cards on this page. Return to the previous page or refresh.'} />
+          <PageControls data={inbox} onOffset={setInboxOffset} />
+        </>}
+      </CrmCard>
+    </>}
+    {selected && <CrmModal wide title={`Scorecard · ${selected.wardName ?? selected.wardCode} · ${selected.period.slice(0, 7)}`}
+      onClose={() => { if (!ackBusy) closeCard(); }}>
+      {detailLoading ? <p>Loading scorecard…</p> : detailError ? <div role="alert">
+        <p>{detailError}</p><CrmSmallButton onClick={() => openCard(selected)}>Retry detail</CrmSmallButton>
+      </div> : detail && <>
+        <p><CrmBadge value={detail.status} /> · Member: {memberLabel({ shareName: detail.shareName, memberPublicCode: selected.shareName ? selected.memberPublicCode : null })}</p>
+        <CrmTable columns={['Category', 'Score / 5', 'Reason']} rows={detail.items.map((item) => [
+          categoryLabel(summary, item.category),
+          <strong key="score" style={{ fontVariantNumeric: 'tabular-nums', color: item.score <= 2 ? '#991b1b' : '#166534' }}>{item.score} / 5</strong>,
+          <span key="reason" style={{ whiteSpace: 'pre-wrap' }}>{item.reason ?? '—'}</span>,
+        ])} empty="No scored categories on this card." />
+        {detail.status === 'acknowledged' ? <p>Acknowledged {detail.ackAt ? fmtDate(detail.ackAt) : ''}.
+          {detail.ackNote && ` ${detail.ackNote}`} This month is frozen.</p> : canAck ? <div style={{ marginTop: 16 }}>
+          <label htmlFor="scorecard-ack-note">Acknowledgement note (optional, sent to the member)</label>
+          <textarea id="scorecard-ack-note" value={ackNote} onChange={(e) => setAckNote(e.target.value)} rows={3} maxLength={1000}
+            style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '8px 0', fontFamily: 'inherit' }} />
+          <CrmSmallButton onClick={acknowledge} disabled={ackBusy}>{ackBusy ? 'Acknowledging…' : 'Acknowledge & notify member'}</CrmSmallButton>
+        </div> : <p>Your account can review these scorecards but cannot acknowledge them.</p>}
+      </>}
+    </CrmModal>}
+  </div>;
 }
 
-/** Best label for a category code, from the summary's taxonomy if present. */
 function categoryLabel(summary: ScorecardSummary | null, code: string): string {
-  return summary?.categories.find((c) => c.category === code)?.label ?? code.replace(/_/g, ' ');
+  return summary?.categories.find((c) => c.category === code)?.label ?? code;
 }

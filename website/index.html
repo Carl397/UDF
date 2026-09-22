@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/style.css?v=20260922-roster">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -192,147 +192,21 @@
     </div>
   </section>
 
-  <!-- Ward councillors: the copy is editable in the CMS, the people are rows
-       managed on /crm/candidates. The cards below are the static fallback that
-       ships with the page (no-JS, pre-publish, CMS-down); udf-content.js
-       replaces the grid with the live roster, adding each photo and bio. -->
+  <!-- Ward councillors: CMS-managed copy and a live public candidate roster.
+       No candidate cards ship here: an unavailable script/API must not present
+       an old roster as currently published. -->
   <section class="section section-alt anchor" id="councillors">
     <div class="wrap">
-      <div class="section-head reveal">
+      <div class="section-head">
         <span class="kicker" data-cms="marketing.candidates:sectionKicker">Ward councillors</span>
         <h2 data-cms="marketing.candidates:sectionTitle">Meet our ward councillors</h2>
         <p class="lede" data-cms="marketing.candidates:sectionLede">The candidates standing for the United Democratic Front Party across Cape Town wards at Local Government 2026.</p>
       </div>
-      <div class="council-grid" data-cms-candidates>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ANDHOR GREY MARKS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ANDHOR KARL MARKS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>MARK MINNIES</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>JOSEPH RICHARD NICHOLS NEFDT</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ROY STANLEY PRINSLOO</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>FATIMA SWARTZ</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ASHLEY CRAIG CLOETE</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ROGER STEVE ROMAN</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>RASHIED SOLOMONS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>RAYBIN THOMAS CHARLES WINDVOGEL</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>RONALD STEPHEN SIMONS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>LIONEL GODFREY SOLOMONS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>MICHAEL JACK POGGENPOEL</h3>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>MAHMOUD ESTERHUIZEN</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>JEFF MARIO THOMAS CHRISTIANS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>TREVOR LESLEY ISAAC JANTJES</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>SEAN FREDERICK NEFDT</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>AUBREY CHARLES ROBINSON</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>KENNITH PHILIP HOFFMAN</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>ANDRE CHRISTOPHER SAMPIE</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>DENVER DANIELS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>JEFFREY BOTHATA OLIPHANT</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>STEPHEN NOBLE</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>CHRISTOPHER VAN DER VENT</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>KAREN DAWN MAARMAN</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
-        <article class="council-card reveal">
-          <div class="council-photo" aria-hidden="true"></div>
-          <h3>JACQUELINE WEAVER MARKS</h3>
-          <p class="council-bio">Evidence-based. Practical. Community-driven.</p>
-        </article>
+      <div class="council-grid" data-cms-candidates data-roster-state="not-loaded" aria-busy="false">
+        <div class="council-roster-status">
+          <p role="status">The current candidate roster has not loaded. If this message remains, please reload the page.</p>
+          <noscript><p>Enable JavaScript to load the currently published candidate roster.</p></noscript>
+        </div>
       </div>
     </div>
   </section>
@@ -387,7 +261,7 @@
 </footer>
 
 <script src="assets/js/udf-analytics.js" data-site="marketing"></script>
-<script src="assets/js/udf-content.js" data-api="https://crm.udf-party.co.za/api"></script>
+<script src="assets/js/udf-content.js?v=20260922-roster" data-api="https://crm.udf-party.co.za/api"></script>
 <script src="assets/js/main.js"></script>
 </body>
 </html>

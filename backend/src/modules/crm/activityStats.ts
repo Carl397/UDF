@@ -1,6 +1,7 @@
 import { query } from '../../db/pool.js';
 import { wardCodeScope, privateTierClause } from '../../auth/scope.js';
 import { Permission, type Principal } from '../../auth/permissions.js';
+import { CASE_PERFORMANCE_CTES, CASE_PERFORMANCE_JSON } from './aggregates.js';
 
 /** Scoped database aggregates: never computed from a paginated list. */
 export async function getDashboardActivity(principal: Principal, only?: 'reports' | 'cases' | 'patrols') {
@@ -38,13 +39,13 @@ export async function getDashboardActivity(principal: Principal, only?: 'reports
       daily AS (SELECT to_char(day,'YYYY-MM-DD') AS label, count(s.id)::int AS value
         FROM days LEFT JOIN scoped s ON (s.created_at AT TIME ZONE 'Africa/Johannesburg')::date = day GROUP BY day ORDER BY day),
       recent AS (SELECT id, status::text AS status, ward_code AS "wardCode", updated_at AS "updatedAt"
-        FROM scoped ORDER BY updated_at DESC, id LIMIT 10)
+        FROM scoped ORDER BY updated_at DESC, id LIMIT 10)${config.key === 'cases' ? CASE_PERFORMANCE_CTES : ''}
       SELECT json_build_object('total',(SELECT count(*) FROM scoped),
         'byStatus',COALESCE((SELECT json_agg(statuses ORDER BY label) FROM statuses),'[]'::json),
         'byCategory',COALESCE((SELECT json_agg(categories ORDER BY value DESC) FROM categories),'[]'::json),
         'byWard',COALESCE((SELECT json_agg(wards ORDER BY value DESC) FROM wards),'[]'::json),
         'dailyCreated',(SELECT json_agg(daily ORDER BY label) FROM daily),
-        'recent',COALESCE((SELECT json_agg(recent) FROM recent),'[]'::json)${extra}) AS stats`, scope.params);
+        'recent',COALESCE((SELECT json_agg(recent) FROM recent),'[]'::json)${extra}${config.key === 'cases' ? `,'performance',${CASE_PERFORMANCE_JSON}` : ''}) AS stats`, scope.params);
     modules[config.key] = row.stats;
   }
   return { asOf: new Date().toISOString(), periodDays: 30, timezone: 'Africa/Johannesburg', modules };

@@ -798,7 +798,7 @@ export interface Verification {
   id: string;
   serviceRequestId: string;
   memberId: string;
-  verdict: string;
+  verdict: 'fixed' | 'not_fixed' | 'partial';
   note: string | null;
   photoId: string | null;
   createdAt: string;
@@ -1080,9 +1080,47 @@ export interface ActivityModuleStats {
   overdue?: number; unassigned?: number; medianAcknowledgeHours?: number | null; acknowledgedSample?: number;
   distanceM30d?: number | null; completed30d?: number; unknownDistance30d?: number; outstandingStops?: number;
 }
+export interface CaseMetrics {
+  total: number;
+  open: number;
+  resolved: number;
+  slaBreached: number;
+  resolutionRatePct: number | null;
+}
+export interface CasePerformance {
+  asOf: string;
+  totals: CaseMetrics;
+  byStatus: { label: string; value: number }[];
+  byCategory: { label: string; value: number }[];
+  byWard: (CaseMetrics & { wardCode: string | null })[];
+}
+export interface WardSummary {
+  asOf: string;
+  wardFilter: string | null;
+  total: number;
+  rows: {
+    code: string;
+    name: string;
+    members: number;
+    cases: CaseMetrics | null;
+    candidateRecorded: boolean;
+    councillor: { fullName: string } | null;
+  }[];
+}
 export interface DashboardActivity {
   asOf: string; periodDays: number; timezone: string;
-  modules: Record<'reports' | 'cases' | 'patrols', ActivityModuleStats | null>;
+  modules: {
+    reports: ActivityModuleStats | null;
+    cases: (ActivityModuleStats & { performance: CasePerformance }) | null;
+    patrols: ActivityModuleStats | null;
+  };
+}
+export interface CrmDashboard {
+  activity: DashboardActivity;
+  activeMembers: number;
+  openCases: number;
+  openPetitions: number;
+  openParticipations: number;
 }
 
 /** A resident report to the ward councillor (private to author + ward staff). */
@@ -1579,10 +1617,30 @@ export interface ScorecardInboxRow {
   items: ScorecardItem[];
 }
 
-export interface ScorecardInbox {
+export type ScorecardStatus = 'submitted' | 'viewed' | 'acknowledged';
+export interface ScorecardFilters {
+  period?: string;
+  ward?: string;
+  status?: ScorecardStatus;
+}
+export interface ScorecardPageFilters extends ScorecardFilters {
+  limit?: number;
+  offset?: number;
+}
+export interface ScorecardMeta {
   period: string;
   scope: 'ward' | 'region' | 'national';
   wardFilter: string | null;
+  statusFilter: ScorecardStatus | null;
+  asOf: string;
+}
+export interface ScorecardPageMeta extends ScorecardMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+export interface ScorecardInbox extends ScorecardPageMeta {
   rows: ScorecardInboxRow[];
 }
 
@@ -1591,6 +1649,7 @@ export interface ScorecardCategorySummary {
   category: string;
   label: string;
   position: number;
+  active: boolean;
   count: number;
   average: number | null;
   /** Score histogram, keys `'1'`..`'5'`. */
@@ -1598,11 +1657,12 @@ export interface ScorecardCategorySummary {
   lowCount: number;
 }
 
-export interface ScorecardSummary {
-  period: string;
-  scope: 'ward' | 'region' | 'national';
-  wardFilter: string | null;
+export interface ScorecardSummary extends ScorecardMeta {
   scorecards: number;
+  itemCount: number;
+  lowScoreItems: number;
+  lowScorecards: number;
+  awaitingAcknowledgement: number;
   overallAverage: number | null;
   categories: ScorecardCategorySummary[];
 }
@@ -1622,10 +1682,7 @@ export interface ScorecardLowReasonRow {
   memberPublicCode: string | null;
 }
 
-export interface ScorecardLowReasons {
-  period: string;
-  scope: 'ward' | 'region' | 'national';
-  wardFilter: string | null;
+export interface ScorecardLowReasons extends ScorecardPageMeta {
   rows: ScorecardLowReasonRow[];
 }
 

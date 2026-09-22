@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, dataReadError } from '../../lib/api';
 import { Icon, useToast } from '../ui';
 import type { ScorecardCurrent, ScorecardItemInput } from '../../types';
 
@@ -56,6 +56,8 @@ export default function RateCouncillor() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
 
   // Category code → chosen score (1–5) and reason text, seeded from any card the
   // member already saved this month (submitted but not yet acknowledged).
@@ -65,11 +67,14 @@ export default function RateCouncillor() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     api
       .getCurrentScorecard()
       .then((c) => {
         if (cancelled) return;
         setCurrent(c);
+        setLastFetchedAt(new Date().toISOString());
         setError(null);
         const nextScores: Record<string, number> = {};
         const nextReasons: Record<string, string> = {};
@@ -81,12 +86,12 @@ export default function RateCouncillor() {
         setReasons(nextReasons);
         setShareName(c.shareName);
       })
-      .catch((e: { message?: string }) => !cancelled && setError(e?.message ?? 'Could not load your scorecard.'))
+      .catch((e: unknown) => !cancelled && setError(dataReadError(e)))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const categories = current?.categories ?? [];
 
@@ -125,15 +130,20 @@ export default function RateCouncillor() {
       reason: scores[cat.code]! <= 2 ? (reasons[cat.code] ?? '').trim() : null,
     }));
     setSubmitting(true);
+    setError(null);
+    let savedSuccessfully = false;
     try {
       const saved = await api.submitScorecard({ items, shareName });
+      savedSuccessfully = true;
       // Re-read the current card so the status badge + frozen state are truthful.
       const fresh = await api.getCurrentScorecard();
       setCurrent(fresh);
+      setLastFetchedAt(new Date().toISOString());
       setError(null);
       toast(frozenOrSent(fresh.status, saved.status), 'ok');
     } catch (e) {
-      toast((e as { message?: string })?.message ?? 'Could not submit your scorecard.', 'err');
+      toast(dataReadError(e), 'err');
+      if (savedSuccessfully) setError('Your scorecard was saved, but its current status could not be loaded. Retry loading the saved scorecard.');
     } finally {
       setSubmitting(false);
     }
@@ -151,7 +161,9 @@ export default function RateCouncillor() {
     return (
       <div className="card">
         <div className="mini-label">Rate your councillor</div>
-        <p className="hint-text">{error ?? 'Your scorecard is not available yet.'}</p>
+        <p className="hint-text" role="alert">{error ?? 'Your scorecard is not available yet.'}</p>
+        {lastFetchedAt && <p className="tiny">Last successful fetch: <time dateTime={lastFetchedAt}>{new Date(lastFetchedAt).toLocaleString()}</time>. Not current.</p>}
+        <button className="btn btn-primary" disabled={submitting} onClick={() => setAttempt((n) => n + 1)}>Retry loading saved scorecard</button>
       </div>
     );
   }
@@ -163,6 +175,8 @@ export default function RateCouncillor() {
         <p className="hint-text" style={{ margin: 0 }}>
           {current.message ?? 'There is no councillor to rate right now.'}
         </p>
+        {lastFetchedAt && <p className="tiny">Last successful fetch: <time dateTime={lastFetchedAt}>{new Date(lastFetchedAt).toLocaleString()}</time></p>}
+        <button className="btn btn-primary" onClick={() => setAttempt((n) => n + 1)}>Check again</button>
       </div>
     );
   }
@@ -178,6 +192,7 @@ export default function RateCouncillor() {
           {current.ward ? `Ward ${current.ward} · ` : ''}
           {STATUS_LABEL[current.status] ?? current.status}
         </p>
+        {lastFetchedAt && <p className="tiny">Last successful fetch: <time dateTime={lastFetchedAt}>{new Date(lastFetchedAt).toLocaleString()}</time></p>}
       </div>
 
       {current.frozen ? (

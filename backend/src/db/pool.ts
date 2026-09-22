@@ -56,6 +56,14 @@ export async function withTransaction<T>(
   }
 }
 
+/** A multi-query read uses one database clock and one immutable MVCC snapshot. */
+export async function withReadSnapshot<T>(fn: (run: typeof query) => Promise<T>): Promise<T> {
+  return withTransaction(async (client) => {
+    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    return fn(<R extends pg.QueryResultRow = any>(text: string, params?: unknown[]) => client.query<R>(text, params));
+  });
+}
+
 export async function checkDb(): Promise<boolean> {
   try {
     await pool.query('SELECT 1');

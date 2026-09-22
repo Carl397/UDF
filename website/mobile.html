@@ -38,9 +38,9 @@
           <span class="gold">In your pocket.</span>
         </h1>
         <p class="udf-sub">
-          Everything your ward needs in one secure app — watch the movement
-          grow on a live map and heat map, follow patrols and engagements,
-          and rate the councillors who serve you.
+          Explore your ward in one secure app — browse ward boundaries,
+          follow patrols and engagements, and share private monthly feedback
+          about your councillor.
         </p>
         <div class="udf-cta-row">
           <button type="button" class="udf-btn udf-btn-gold" data-apk>
@@ -48,11 +48,11 @@
             Download UDF Party App
           </button>
         </div>
-        <p class="udf-release">Android release 1.0.7 · 30.1 MB</p>
+        <p class="udf-release">Android release 1.0.8 · 30.1 MB</p>
         <div class="udf-hero-meta">
-          <div><b>Live</b> map &amp; heat map</div>
+          <div><b>Explore</b> your ward map</div>
           <div><b>Patrols</b> &amp; engagements</div>
-          <div><b>Rate</b> your councillor</div>
+          <div><b>Private</b> monthly feedback</div>
         </div>
       </div>
 
@@ -102,13 +102,13 @@
       <div class="udf-grid">
         <div class="udf-card">
           <div class="udf-card-icon">🗺️</div>
-          <h3>Live Map</h3>
-          <p>See events across every region on an interactive map.</p>
+          <h3>Ward Map</h3>
+          <p>Explore regions, subcouncils and wards. Map colors identify areas, not report volume.</p>
         </div>
         <div class="udf-card">
           <div class="udf-card-icon">🔥</div>
-          <h3>Heat Map</h3>
-          <p>Spot momentum instantly — engagement and head-count density at a glance.</p>
+          <h3>Service-case metrics</h3>
+          <p>View recorded service-case counts where your permissions allow. Resident reports and monthly councillor feedback are separate workflows.</p>
         </div>
         <div class="udf-card">
           <div class="udf-card-icon">🚑</div>
@@ -164,8 +164,8 @@
       <h2 class="udf-h2">Accountability at your fingertips</h2>
       <p class="udf-lead">
         Give the community the tools to judge true progress — not promises.
-        Track the people you elected, follow what actually gets delivered,
-        and hold them to account from your phone.
+        Follow ward activity, share feedback with authorized reviewers,
+        and hold your councillor to account from your phone.
       </p>
       <div class="udf-tools">
         <div class="udf-tool">
@@ -178,18 +178,19 @@
         </div>
         <div class="udf-tool">
           <span class="udf-tool-num">2</span>
-          <h4>Rate your councillor</h4>
+          <h4>Monthly councillor feedback</h4>
           <p>
-            Service delivered, or an issue ignored? Rate your councillor.
-            Scores are public and feed real performance reviews.
+            Monthly councillor scorecards are private, with access limited
+            by permissions. Public legacy ward ratings are a separate feature.
           </p>
         </div>
         <div class="udf-tool">
           <span class="udf-tool-num">3</span>
-          <h4>See true progress</h4>
+          <h4>Service-case progress</h4>
           <p>
-            Watch promises turn into delivery — housing, water, electricity
-            and safety — with visible progress for your ward.
+            Service-case metrics reflect recorded service requests only,
+            not resident reports or monthly councillor scorecards.
+            Availability depends on your permissions.
           </p>
         </div>
       </div>
@@ -207,15 +208,15 @@
           <img src="/assets/img/brand/icon-32.png" alt="" width="28" height="28" style="border-radius:7px">
           <div>
             <div class="udf-notif-title">UDF Party</div>
-            <div style="font-size:11px;color:#94a3b8">now</div>
+            <div style="font-size:11px;color:#94a3b8">Example notification</div>
           </div>
         </div>
         <div style="aspect-ratio:2 / 1">
           <img class="udf-fill" src="/assets/img/brand/notification.png" alt="Push notification big picture">
         </div>
         <div class="udf-notif-body">
-          Patrol logged — Ward 96, 6pm. 3 issues captured. Tap to see the
-          map and rate the response.
+          Patrol update — open the app to view the ward activity
+          available to you.
         </div>
       </div>
     </div>
@@ -228,8 +229,8 @@
         <h2>Join the movement today</h2>
         <p>
           Install the official UDF app on Android and carry your ward with
-          you — every patrol, engagement and councillor rating, right in
-          your pocket.
+          you — ward activity and private monthly councillor feedback,
+          right in your pocket.
         </p>
         <div class="udf-cta-row" style="justify-content:center">
           <button type="button" class="udf-btn udf-btn-gold" data-apk>
@@ -255,7 +256,7 @@
   // logs the download then 302-redirects to the APK; navigation is not
   // subject to CORS, so it works cross-origin from the apex site.
   (function () {
-    var APK = 'https://crm.udf-party.co.za/api/public/download/apk?v=1.0.7';
+    var APK = 'https://crm.udf-party.co.za/api/public/download/apk?v=1.0.8';
     document.querySelectorAll('[data-apk]').forEach(function (b) {
       b.addEventListener('click', function () { window.location.assign(APK); });
     });

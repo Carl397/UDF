@@ -6,6 +6,7 @@ import { requirePermission } from '../../middleware/authorize.js';
 import { Permission, Role } from '../../auth/permissions.js';
 import { query } from '../../db/pool.js';
 import * as crmService from './service.js';
+import { getWardSummary, wardSummaryQuery } from './aggregates.js';
 import * as userService from './userService.js';
 import * as campaignService from './campaignService.js';
 import * as mediaService from './mediaService.js';
@@ -40,6 +41,15 @@ function actorOf(req: Request): userService.ActorCtx {
 router.use(authenticate);
 router.use(requirePermission(Permission.OVERVIEW_READ));
 
+router.get(
+  '/wards/summary',
+  requirePermission(Permission.MEMBER_READ),
+  asyncHandler(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await getWardSummary(req.principal!, wardSummaryQuery.parse(req.query)));
+  }),
+);
+
 /**
  * GET /crm/dashboard
  * High-level metrics for the CRM dashboard, scoped to the caller's ward/region.
@@ -48,6 +58,7 @@ router.get(
   '/dashboard',
   asyncHandler(async (req, res) => {
     const stats = await crmService.getDashboardStats(req.principal!);
+    res.setHeader('Cache-Control', 'no-store');
     res.json(stats);
   }),
 );

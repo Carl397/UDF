@@ -16,7 +16,8 @@ verificationsRouter.get(
     try {
       const parsed = listVerificationsQuery.safeParse(req.query);
       if (!parsed.success) throw parsed.error;
-      const result = await svc.listVerifications(parsed.data);
+      const result = await svc.listVerifications(parsed.data, req.principal!);
+      res.setHeader('Cache-Control', 'no-store');
       res.json(result);
     } catch (err) { next(err); }
   },
